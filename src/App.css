@@ -1,0 +1,128 @@
+.logo.vite:hover {
+  filter: drop-shadow(0 0 2em #747bff);
+}
+
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafb);
+}
+:root {
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+
+  color: #0f0f0f;
+  background-color: #f6f6f6;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+
+  --header-height: 40px;
+}
+
+.row {
+  display: flex;
+  justify-content: center;
+}
+
+h1 {
+  text-align: center;
+}
+
+button:hover {
+  border-color: #396cd8;
+}
+button:active {
+  border-color: #396cd8;
+}
+
+input,
+button {
+  outline: none;
+}
+
+html {
+  overflow: hidden;
+  box-sizing: border-box;
+  height: 100vh;
+}
+
+.container {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: start;
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.main-container {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: start;
+  height: calc(100vh - var(--header-height));
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.file-tree-header {
+  padding: 1rem;
+  display: flex;
+  flex-direction: row;
+  justify-content: start;
+  align-items: center;
+}
+
+.file-tree-container {
+  height: auto;
+  border-right: 1px solid #e2e8f0;
+}
+
+.content-container {
+  outline: 1px solid #d8daff;
+  border-radius: 5px;
+  transition: outline 0.08s ease-in-out;
+  overflow: auto;
+  box-sizing: border-box;
+
+  position: relative;
+
+  &:focus {
+    outline: 2px solid #747bff;
+  }
+
+  > pre {
+    flex: 1;
+    white-space: pre-wrap; /* 使内容在长单词时也能换行 */
+    word-wrap: break-word; /* 使内容在长单词时也能换行 */
+    margin: 0; /* 去除默认的 margin */
+    font-size: small;
+  }
+}
+
+/* @media (prefers-color-scheme: dark) {
+  :root {
+    color: #f6f6f6;
+    background-color: #2f2f2f;
+  }
+
+  a:hover {
+    color: #24c8db;
+  }
+
+  input,
+  button {
+    color: #ffffff;
+    background-color: #0f0f0f98;
+  }
+  button:active {
+    background-color: #0f0f0f69;
+  }
+} */

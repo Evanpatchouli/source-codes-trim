@@ -1,0 +1,27 @@
+.header {
+  border-bottom: 1px solid #e2e8f0;
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title-bar-action {
+  opacity: 0.4;
+  transition: opacity 0.1s ease;
+
+  &:hover {
+    opacity: 1;
+    cursor: pointer;
+  }
+}
+
+#title-bar-menubtn.chakra-menu__menu-button {
+  opacity: 0.4;
+  transition: opacity 0.1s ease;
+}
+
+#title-bar-menubtn.chakra-menu__menu-button:hover {
+  opacity: 1;
+  cursor: pointer;
+}
