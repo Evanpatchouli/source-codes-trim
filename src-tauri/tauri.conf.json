@@ -35,6 +35,28 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "copyright": "Copyright © 2024 Evanpatchouli",
+    "publisher": "Evanpatchouli",
+    "category": "Utility",
+    "shortDescription": "An app to trim source codes",
+    "resources": [
+      "LICENSE",
+      "README.md"
+    ],
+    "windows": {
+      "allowDowngrades": true,
+      "certificateThumbprint": "B8EA0E47DBDD472822A793E078341F670DCB55E0",
+      "digestAlgorithm": "sha256",
+      "nsis": null,
+      "signCommand": null,
+      "timestampUrl": "http://timestamp.comodoca.com",
+      "tsp": false,
+      "webviewInstallMode": {
+        "silent": true,
+        "type": "downloadBootstrapper"
+      },
+      "wix": null
+    }
   }
 }
