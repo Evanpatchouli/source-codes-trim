@@ -1,13 +1,13 @@
 {
   "name": "source-codes-trim",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "An app to trim source codes",
   "info": {
     "appname": "源码整理器",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "源码整理器, 用于整理源码, 生成源码树",
-    "date": "2024/10/23",
+    "date": "2024/10/26",
     "author": {
       "name": "Evanpatchouli",
       "email": [

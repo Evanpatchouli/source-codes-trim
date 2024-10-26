@@ -13,12 +13,12 @@ import toast from "react-hot-toast";
 import PrivacyTip from "./PrivacyTip";
 import BuyMeCoffee from "./BuyMeCoffee";
 import { fetch } from "@tauri-apps/plugin-http";
-
 import { open } from "@tauri-apps/plugin-shell";
-import "./index.css";
 import Update from "./Update";
 import compareVersion from "#/utils/compareVersion";
 import Cache from "./Cache";
+import "./index.css";
+
 type AppWindow = ReturnType<typeof getCurrentWindow>;
 
 const repoURL = "https://github.com/Evanpatchouli/source-codes-trim";
@@ -122,21 +122,21 @@ export default function TitleBar() {
       position: "bottom-right",
     });
     try {
-      const res = await fetch("https://api.github.com/repos/Evanpatchoulisource-codes-trim/releases/latest", {
+      const res = await fetch("https://api.github.com/repos/Evanpatchouli/source-codes-trim/releases/latest", {
         headers: {
           "User-Agent": window?.navigator?.userAgent || "SourceCodesTrim",
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28",
         },
       });
+      const current_version = packageJson.info.version;
       const data = (await res.json()) as ApiGithub.ResponseLatestRelease;
-      const latest_version = data.tag_name;
+      const latest_version = data.tag_name || current_version;
       setLatestVersion(latest_version);
       setLatestVersionPublishedAt(data.published_at);
       setLatestVersionURL(data.url);
-      console.log(`latest_version: ${latest_version}, published_at: ${data.published_at}`);
       const shouldUpdate = compareVersion(packageJson.info.version, latest_version) < 0;
-      if (!shouldUpdate) {
+      if (shouldUpdate) {
         toast.remove(toastId);
         UpdateDialog.open();
       } else {
@@ -146,6 +146,7 @@ export default function TitleBar() {
       }
     } catch (error) {
       toast.remove(toastId);
+      console.error(error);
       toast.error("检查更新失败", {
         position: "bottom-right",
       });

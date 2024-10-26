@@ -7,12 +7,14 @@ import FileTree, { TreeRef } from "#components/FileTree";
 import flatternFileTree from "#utils/flatternFileTree";
 import { Resizable } from "re-resizable";
 import invoke from "#utils/invoke";
-import "./App.css";
 import parseCludes from "./utils/parseCludes";
 import Loading from "./components/Loading";
 import sleep from "./utils/sleep";
 import Tip from "./components/Tip";
 import { useLocalStorage } from "@uidotdev/usehooks";
+import Broom from "./components/icons/Broom";
+import toast from "react-hot-toast";
+import "./App.css";
 
 const includesPlaceholder = `不填写则默认包含全部文件。格式类同 .gitignore，用换行或 | 分割，示例:
 *.ts | *.rs
@@ -25,6 +27,20 @@ node_modules
 
 const minLoadingTime = 200;
 
+const MAX_CONTENT_LENGTH = 1000000; // 设置最大内容长度 100 万字符
+
+const getMaxContentLength = () => {
+  if ("memory" in performance) {
+    // @ts-ignore
+    const { totalJSHeapSize, usedJSHeapSize, jsHeapSizeLimit } = performance.memory;
+    const availableMemory = jsHeapSizeLimit - usedJSHeapSize;
+    // 假设我们使用可用内存的 10% 作为最大内容长度
+    return Math.floor(availableMemory * 0.1);
+  }
+  // 如果 performance.memory 不可用，使用默认值
+  return MAX_CONTENT_LENGTH;
+};
+
 function App() {
   const [root, setRoot] = useState<string>("");
   const [includes, setIncludes] = useState<string>("");
@@ -33,8 +49,8 @@ function App() {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [treeLoading, setTreeLoading] = useState<boolean>(false);
   const [content, setContent] = useState<string>("");
-  const [contentLoading, setContentLoading] = useState<boolean>(false);
-  const lineNumber = content ? content.split("\n").length : 0;
+  const [contentState, setContentState] = useState<"loading" | "loaded" | "error">("loaded");
+  const lineNumber = (content ? content.split("\n") : []).length;
 
   const disable_trim_source_codes = files.length === 0;
 
@@ -46,9 +62,41 @@ function App() {
       path: root,
     });
 
-  const [treeWidth, setTreeWidth] = useState(300);
+  const [treeWidth, setTreeWidth] = useState(240);
 
   const [showLongtimeTip, setShowLongtimeTip] = useLocalStorage("showLongtimeTip", true);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      toast.success("已复制到剪贴板", {
+        position: "bottom-right",
+      });
+    } catch (error) {
+      toast.error("复制失败，请手动复制", {
+        position: "bottom-right",
+      });
+    }
+  };
+
+  const handleClear = () => {
+    setContent("");
+  };
+
+  const preRef = useRef<HTMLPreElement>(null);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.ctrlKey && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      if (preRef.current) {
+        const range = document.createRange();
+        range.selectNodeContents(preRef.current);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+    }
+  };
 
   return (
     <div className="container">
@@ -89,7 +137,7 @@ function App() {
             <FileTree items={files} ref={treeRef} loading={treeLoading} />
           </Resizable>
           <Box
-            id="maib-viewbox"
+            id="main-viewbox"
             display="flex"
             flexDirection="column"
             rowGap="1rem"
@@ -126,7 +174,11 @@ function App() {
                       directory: true,
                       multiple: false,
                     });
-                    setRoot(path || "");
+                    if (path && path !== root) {
+                      setRoot(path);
+                      setFiles([]);
+                      setContent("");
+                    }
                   }}
                   size="sm"
                   className="nowrap"
@@ -250,7 +302,7 @@ function App() {
                     size="sm"
                     disabled={disable_trim_source_codes}
                     onClick={async () => {
-                      setContentLoading(true);
+                      setContentState("loading");
                       const timestart = performance.now();
                       const ignoredPaths = treeRef.current?.getIgnoredPaths() || [];
                       const pathList = flatternFileTree(files)
@@ -268,10 +320,16 @@ function App() {
                       if (timedelta < minLoadingTime) {
                         await sleep(minLoadingTime - timedelta);
                       }
-                      setContentLoading(false);
-                      queueMicrotask(() => {
-                        setContent(resp.result || "");
-                      });
+                      const MAX = getMaxContentLength();
+                      if (resp.result.length > MAX) {
+                        setContent("内容过长，无法显示");
+                        setContentState("error");
+                      } else {
+                        queueMicrotask(() => {
+                          setContent(resp.result || "");
+                          setContentState("loaded");
+                        });
+                      }
                     }}
                   >
                     整理源码
@@ -280,40 +338,45 @@ function App() {
               </Flex>
             </Box>
             {/** @Evanpatchouli 下面的 2rem 是因为 main-viewbox 的 padding 为 1rem */}
-            <Box className="content-container" flex="1" tabIndex={0} width={`calc(100vw - ${treeWidth}px - 2rem)`}>
+            <Box
+              className="content-container"
+              tabIndex={0}
+              width={`calc(100vw - ${treeWidth}px - 2rem)`}
+              onKeyDown={handleKeyDown}
+            >
               <Flex
                 position="absolute"
-                alignItems="center"
-                right="0.5rem"
+                right="1rem"
                 top="0.5rem"
-                gap="0.5rem"
-                opacity={contentLoading ? 0 : 1}
+                alignItems="center"
+                opacity={contentState === "loaded" ? 1 : 0}
+                zIndex={contentState === "loaded" ? 1 : -1}
               >
                 <Text fontSize="sm" color="GrayText">
                   {lineNumber} 行
                 </Text>
-                <Button size="sm" variant="ghost" color="GrayText">
+                <Button size="sm" variant="ghost" color="GrayText" onClick={handleCopy} ml="0.5rem">
                   <Text fontWeight="medium">复制</Text>
                   <CopyIcon fontSize="sm" ml="0.2rem" />
                 </Button>
+                <Button size="sm" variant="ghost" color="GrayText" onClick={handleClear}>
+                  <Text fontWeight="medium">清除</Text>
+                  <Broom fontSize="sm" ml="0.2rem" />
+                </Button>
               </Flex>
               <Flex
-                hidden={!contentLoading}
+                hidden={contentState !== "loading"}
                 position="absolute"
                 top="50%"
                 left="50%"
                 gap="1rem"
                 transform="translate(-50%, -50%)"
               >
-                <Loading on={contentLoading} />
+                <Loading on />
                 <span>整理中...</span>
               </Flex>
-              <pre
-                style={{
-                  opacity: contentLoading ? 0 : 1,
-                }}
-              >
-                {content}
+              <pre id="content-box" data-state={contentState} ref={preRef}>
+                <code>{content}</code>
               </pre>
             </Box>
           </Box>

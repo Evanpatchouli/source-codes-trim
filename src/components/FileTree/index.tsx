@@ -146,5 +146,5 @@ export default forwardRef<TreeRef, FileTreeProps>(function FileTree(props, ref) 
 
   const items = formatTree(props.items);
 
-  return <div>{items.map((i) => renderTree(i, true))}</div>;
+  return <div className="tree-wrapper">{items.map((i) => renderTree(i, true))}</div>;
 });

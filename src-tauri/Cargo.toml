@@ -1,6 +1,6 @@
 [package]
 name = "source-codes-trim"
-version = "0.1.0"
+version = "0.2.0"
 description = "An app to trim source codes"
 authors = ["Evanpatchouli"]
 edition = "2021"
