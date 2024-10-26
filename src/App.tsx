@@ -266,7 +266,7 @@ function App() {
                             setShowLongtimeTip(false);
                           }}
                         >
-                          不在显示
+                          不再显示
                         </Button>
                       )}
                     />
