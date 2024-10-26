@@ -193,9 +193,9 @@ pub fn trim_source_codes(
     for file in files {
         let content = match fs::read_to_string(&file) {
             Ok(content) => content,
-            Err(e) => {
+            Err(_e) => {
                 skipped.push(file.display().to_string());
-                eprintln!("读取文件失败: {}", e);
+                // eprintln!("读取文件失败: {}", e);
                 continue;
             }
         };

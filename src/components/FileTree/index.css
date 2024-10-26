@@ -1,3 +1,8 @@
+.tree-wrapper {
+  height: calc(100% - var(--file-tree-header-height));
+  overflow-y: auto;
+}
+
 .tree {
   padding-left: 1.5rem;
 

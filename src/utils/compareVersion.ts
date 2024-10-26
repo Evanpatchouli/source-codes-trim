@@ -4,6 +4,10 @@
  */
 const compareVersion = (v1: string, v2: string): number => {
   const parseVersion = (version: string) => {
+    // 移除前缀 "v"
+    if (version.startsWith("v")) {
+      version = version.slice(1);
+    }
     const [main, suffix] = version.split("-");
     const [major, minor, patch] = main.split(".").map(Number);
     return { major, minor, patch, suffix: suffix || "" };
