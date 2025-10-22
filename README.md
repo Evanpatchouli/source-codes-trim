@@ -1,5 +1,7 @@
 # 源码整理器
 
+![软件截图](https://evan-oss-bucket1.oss-cn-hangzhou.aliyuncs.com/source-coudes-trim/036229dbaafed37f8df694f538b98fc3.png "软件截图")
+
 ## 项目简介
 
 源码整理器是一个用于整理源码的工具，可以将源码中的注释、空行等无关内容去除，使源码更加简洁。可用于申请软件著作权、专利等。
