@@ -11,6 +11,7 @@ declare interface TrimSourceCodesResult {
   skipped: FileIssue[];
   byteCount: number;
   lineCount: number;
+  truncated: boolean;
   exportId: string | null;
 }
 

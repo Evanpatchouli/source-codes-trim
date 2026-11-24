@@ -1,16 +1,42 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{self, Seek},
+    io::{self, Cursor, Read, Seek},
     path::Path,
     sync::{Arc, Mutex, MutexGuard},
 };
 use tempfile::NamedTempFile;
 
+trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek> ReadSeek for T {}
+
+enum Snapshot {
+    Memory(Box<[u8]>),
+    Disk(Mutex<File>),
+}
+
+impl Snapshot {
+    fn with_reader<T>(
+        &self,
+        read: impl FnOnce(&mut dyn ReadSeek) -> io::Result<T>,
+    ) -> io::Result<T> {
+        match self {
+            Self::Memory(bytes) => read(&mut Cursor::new(bytes.as_ref())),
+            Self::Disk(file) => {
+                let mut file = file
+                    .lock()
+                    .map_err(|_| io::Error::other("整理结果文件不可用"))?;
+                file.rewind()?;
+                read(&mut *file)
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 struct Results {
     next_id: u64,
-    files: HashMap<String, Arc<Mutex<File>>>,
+    snapshots: HashMap<String, Arc<Snapshot>>,
 }
 
 #[derive(Default, Clone)]
@@ -23,25 +49,33 @@ impl ResultStore {
         self.results.lock().map_err(|_| "整理结果状态不可用".into())
     }
 
-    pub(crate) fn insert(&self, file: File) -> Result<String, String> {
+    fn insert(&self, snapshot: Snapshot) -> Result<String, String> {
         let mut results = self.lock()?;
         results.next_id = results.next_id.checked_add(1).ok_or("整理结果编号已用尽")?;
         let id = results.next_id.to_string();
-        results.files.insert(id.clone(), Arc::new(Mutex::new(file)));
+        results.snapshots.insert(id.clone(), Arc::new(snapshot));
         Ok(id)
     }
 
+    pub(crate) fn insert_file(&self, file: File) -> Result<String, String> {
+        self.insert(Snapshot::Disk(Mutex::new(file)))
+    }
+
+    pub(crate) fn insert_text(&self, text: &str) -> Result<String, String> {
+        self.insert(Snapshot::Memory(text.as_bytes().into()))
+    }
+
     pub(crate) fn release(&self, id: &str) -> Result<(), String> {
-        let file = self.lock()?.files.remove(id);
-        drop(file);
+        let snapshot = self.lock()?.snapshots.remove(id);
+        drop(snapshot);
         Ok(())
     }
 
     pub(crate) fn export(&self, id: &str, destination: &Path) -> Result<(), String> {
         // 导出持有自己的引用，界面释放或替换结果时仍能完成写入。
-        let file = self
+        let snapshot = self
             .lock()?
-            .files
+            .snapshots
             .get(id)
             .cloned()
             .ok_or("整理结果已释放")?;
@@ -53,14 +87,9 @@ impl ResultStore {
         };
         let mut staging = NamedTempFile::new_in(parent)
             .map_err(|error| format!("无法在导出目录创建临时文件：{error}"))?;
-        {
-            // 同一结果的导出共用文件游标，其他结果仍可并行读写。
-            let mut source = file.lock().map_err(|_| "整理结果文件不可用")?;
-            source
-                .rewind()
-                .and_then(|_| io::copy(&mut *source, staging.as_file_mut()))
-                .map_err(|error| format!("复制整理结果失败：{error}"))?;
-        }
+        snapshot
+            .with_reader(|reader| io::copy(reader, staging.as_file_mut()))
+            .map_err(|error| format!("复制整理结果失败：{error}"))?;
         staging
             .as_file()
             .sync_all()
@@ -80,14 +109,14 @@ mod tests {
     fn snapshot(store: &ResultStore, content: &[u8]) -> String {
         let mut file = tempfile::tempfile().unwrap();
         file.write_all(content).unwrap();
-        store.insert(file).unwrap()
+        store.insert_file(file).unwrap()
     }
 
     #[test]
     fn release_is_idempotent_and_drops_the_file_after_the_last_reader() {
         let store = ResultStore::default();
         let id = snapshot(&store, b"result");
-        let reader = store.lock().unwrap().files[&id].clone();
+        let reader = store.lock().unwrap().snapshots[&id].clone();
         let weak = Arc::downgrade(&reader);
         store.clone().release(&id).unwrap();
         store.release(&id).unwrap();
@@ -122,7 +151,7 @@ mod tests {
     fn invalid_destination_preserves_the_target_and_allows_retry() {
         let dir = tempfile::tempdir().unwrap();
         let store = ResultStore::default();
-        let id = snapshot(&store, b"full result");
+        let id = store.insert_text("full result").unwrap();
         let target = dir.path().join("directory");
         fs::create_dir(&target).unwrap();
         let existing = target.join("existing.txt");
@@ -135,13 +164,35 @@ mod tests {
     }
 
     #[test]
+    fn memory_snapshots_own_their_bytes_and_readers_start_at_zero() {
+        let store = ResultStore::default();
+        let mut text = String::from("内容\r\n😀");
+        let id = store.insert_text(&text).unwrap();
+        text.clear();
+        let snapshot = store.lock().unwrap().snapshots[&id].clone();
+        assert!(matches!(*snapshot, Snapshot::Memory(_)));
+        store.release(&id).unwrap();
+        for _ in 0..2 {
+            let value = snapshot
+                .with_reader(|reader| {
+                    assert_eq!(reader.stream_position()?, 0);
+                    let mut value = String::new();
+                    reader.read_to_string(&mut value)?;
+                    Ok(value)
+                })
+                .unwrap();
+            assert_eq!(value, "内容\r\n😀");
+        }
+    }
+
+    #[test]
     fn failed_copy_keeps_existing_file_intact() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("write-only.txt");
         let mut write_only = File::create(source).unwrap();
         write_only.write_all(b"unreadable").unwrap();
         let store = ResultStore::default();
-        let id = store.insert(write_only).unwrap();
+        let id = store.insert_file(write_only).unwrap();
         let destination = dir.path().join("existing.txt");
         fs::write(&destination, "previous").unwrap();
         assert!(store.export(&id, &destination).is_err());

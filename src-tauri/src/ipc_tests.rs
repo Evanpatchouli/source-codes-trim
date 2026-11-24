@@ -41,44 +41,54 @@ fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
     };
     let scan = invoke("get_files", options(dir.path())).unwrap();
     assert_eq!(scan["files"][0]["name"], "code.ts");
-    let trim = invoke(
-        "trim_source_codes",
-        json!({
-            "files": [&moved_first, &file], "trimWhitespace": true, "trimNewlines": true, "trimComments": true
-        }),
-    )
-    .unwrap();
+    let trim_files =
+        |files: &[&Path]| {
+            invoke("trim_source_codes", json!({
+            "files": files, "trimWhitespace": true, "trimNewlines": true, "trimComments": true
+        })).unwrap()
+        };
+    let target = dir.path().join("export.txt");
+    let check_export = |report: &Value, expected: &[u8]| {
+        let id = report["exportId"].as_str().expect("成功整理后应有导出 ID");
+        assert!(!id.is_empty());
+        fs::write(&target, "此前的导出").unwrap();
+        let args = json!({ "id": id, "path": target });
+        invoke("export_trim_result", args.clone()).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), expected);
+        invoke("release_trim_result", json!({ "id": id })).unwrap();
+        invoke("release_trim_result", json!({ "id": id })).unwrap();
+        assert!(invoke("export_trim_result", args).is_err());
+        assert_eq!(fs::read(&target).unwrap(), expected);
+    };
+    let trim = trim_files(&[&moved_first, &file]);
     let ordered = "init();\nlet n = 3;\n";
     assert_eq!(trim["result"], ordered);
     assert_eq!(trim["processed"], 2);
     assert_eq!(trim["lineCount"], 2);
     assert_eq!(trim["byteCount"], ordered.len());
-    assert!(trim["exportId"].is_null());
+    assert_eq!(trim["truncated"], false);
+    check_export(&trim, ordered.as_bytes());
+
+    let empty_file = dir.path().join("empty.txt");
+    fs::write(&empty_file, []).unwrap();
+    let empty = trim_files(&[&empty_file]);
+    assert_eq!(empty["result"], "");
+    assert_eq!(empty["processed"], 1);
+    assert_eq!(empty["lineCount"], 0);
+    assert_eq!(empty["byteCount"], 0);
+    assert_eq!(empty["truncated"], false);
+    check_export(&empty, b"");
 
     let large_file = dir.path().join("large.txt");
     let prefix = "a".repeat(256 * 1024 - 2);
     let complete = format!("{prefix}🌈\r\n结束");
     fs::write(&large_file, &complete).unwrap();
-    let large = invoke(
-        "trim_source_codes",
-        json!({
-            "files": [large_file], "trimWhitespace": true, "trimNewlines": true, "trimComments": true
-        }),
-    )
-    .unwrap();
+    let large = trim_files(&[&large_file]);
     assert_eq!(large["result"].as_str(), Some(prefix.as_str()));
     assert_eq!(large["lineCount"], 2);
     assert_eq!(large["byteCount"], complete.len());
-    let id = large["exportId"].as_str().unwrap();
-    let target = dir.path().join("export.txt");
-    fs::write(&target, "此前的导出").unwrap();
-    let export_args = json!({ "id": id, "path": target });
-    invoke("export_trim_result", export_args.clone()).unwrap();
-    assert_eq!(fs::read_to_string(&target).unwrap(), complete);
-    invoke("release_trim_result", json!({ "id": id })).unwrap();
-    invoke("release_trim_result", json!({ "id": id })).unwrap();
-    assert!(invoke("export_trim_result", export_args).is_err());
-    assert_eq!(fs::read_to_string(&target).unwrap(), complete);
+    assert_eq!(large["truncated"], true);
+    check_export(&large, complete.as_bytes());
     let missing = dir.path().join("missing");
     let error = invoke("get_files", options(&missing)).unwrap_err();
     assert!(error.as_str().unwrap().contains("missing"), "{error}");

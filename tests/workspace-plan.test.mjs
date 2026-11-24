@@ -32,7 +32,8 @@ function setup(t) {
       case "read_source_plan": return io.saved;
       case "write_source_plan": io.saved = args.content; return;
       case "get_files": return io.scan(args);
-      case "trim_source_codes": return { result: "ok", processed: 1, skipped: [], lineCount: 1, byteCount: 2, exportId: null };
+      case "trim_source_codes": return { result: "ok", processed: 1, skipped: [], lineCount: 1, byteCount: 2, truncated: false, exportId: "short" };
+      case "release_trim_result": return;
       default: throw new Error(cmd);
     }
   });

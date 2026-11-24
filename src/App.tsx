@@ -32,7 +32,7 @@ function App() {
     setOption, toggleIgnored, moveFile, clearOutput, scanFiles, trimFiles, exportResult, exporting, exportFeedback,
     openPlan, savePlan, hasScan, planChanges, planBusy, planFeedback,
   } = useSourceWorkspace();
-  const truncated = Boolean(trimReport?.exportId);
+  const truncated = trimReport?.truncated ?? false;
 
   const disable_trim_source_codes = files.length === 0 || treeLoading || planBusy === "open";
 
@@ -289,9 +289,9 @@ function App() {
                       <Text fontWeight="medium">{truncated ? "复制预览" : "复制"}</Text>
                       <CopyIcon fontSize="sm" ml="0.2rem" />
                     </Button>
-                    {truncated && (
+                    {trimReport?.exportId && (
                       <Button size="sm" colorScheme="blue" onClick={exportResult} isDisabled={exporting}>
-                        {exporting ? "正在导出…" : "导出完整内容"}
+                        {exporting ? "正在导出…" : "导出 TXT"}
                       </Button>
                     )}
                   </>

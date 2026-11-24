@@ -191,7 +191,11 @@ export function createSourceWorkspace() {
     const request = trimRequest;
     update({ exporting: true });
     try {
-      const path = await save({ title: "导出完整内容", defaultPath: "整理后的源码.txt" });
+      const path = await save({
+        title: "导出 TXT",
+        defaultPath: "整理后的源码.txt",
+        filters: [{ name: "文本文件", extensions: ["txt"] }],
+      });
       if (!path || request !== trimRequest) return;
       writing.add(id);
       try {

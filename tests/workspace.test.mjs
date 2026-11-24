@@ -7,9 +7,10 @@ function setup(t) {
   globalThis.window = {};
   t.after(() => { clearMocks(); delete globalThis.window; });
   const pending = [];
-  mockIPC((cmd, args) => new Promise((resolve, reject) => {
-    pending.push({ cmd, args, resolve, reject });
-  }));
+  mockIPC((cmd, args) => {
+    if (cmd === "release_trim_result") return;
+    return new Promise((resolve, reject) => { pending.push({ cmd, args, resolve, reject }); });
+  });
   const workspace = createSourceWorkspace();
   workspace.setOption("path", "A");
   return { workspace, pending };
@@ -20,7 +21,8 @@ const scanResult = (path) => ({
   skipped: [],
 });
 const trimResult = (result) => ({
-  result, processed: 1, skipped: [], byteCount: Buffer.byteLength(result), lineCount: result ? 1 : 0, exportId: null,
+  result, processed: 1, skipped: [], byteCount: Buffer.byteLength(result), lineCount: result ? 1 : 0,
+  truncated: false, exportId: "result-" + result,
 });
 
 test("将原先排除的目录设为新根后可整理其中的文件", async (t) => {

@@ -18,6 +18,7 @@ pub(crate) struct TrimResult {
     pub skipped: Vec<FileIssue>,
     pub byte_count: u64,
     pub line_count: u64,
+    pub truncated: bool,
     pub export_id: Option<String>,
 }
 
@@ -97,13 +98,14 @@ impl Output {
         skipped: Vec<FileIssue>,
         store: &ResultStore,
     ) -> Result<TrimResult, String> {
+        let truncated = self.full.is_some();
         let export_id = if let Some(writer) = self.full {
-            let mut file = writer
+            let file = writer
                 .into_inner()
                 .map_err(|e| format!("写入完整结果失败：{e}"))?;
-            file.rewind()
-                .map_err(|e| format!("读取完整结果失败：{e}"))?;
-            Some(store.insert(file)?)
+            Some(store.insert_file(file)?)
+        } else if processed != 0 || skipped.is_empty() {
+            Some(store.insert_text(&self.preview)?)
         } else {
             None
         };
@@ -113,6 +115,7 @@ impl Output {
             skipped,
             byte_count: self.counts.bytes,
             line_count: self.counts.newlines + u64::from(self.counts.has_unterminated_line()),
+            truncated,
             export_id,
         })
     }
@@ -247,7 +250,19 @@ mod tests {
         assert!(report.skipped[0].reason.contains("读取"));
         assert!(report.skipped[1].reason.contains("UTF-8"));
         assert!(report.skipped[2].reason.contains("空字节"));
-        assert_eq!(trim_files(&[], &options(), &store).unwrap().processed, 0);
+        assert!(!report.truncated);
+        assert!(report.export_id.is_some());
+        let empty_selection = trim_files(&[], &options(), &store).unwrap();
+        assert_eq!(empty_selection.processed, 0);
+        let exported = dir.path().join("empty-selection.txt");
+        fs::write(&exported, b"old").unwrap();
+        store
+            .export(empty_selection.export_id.as_ref().unwrap(), &exported)
+            .unwrap();
+        assert_eq!(fs::read(exported).unwrap(), b"");
+        let failed = trim_files(&[dir.path().join("missing")], &options(), &store).unwrap();
+        assert!(!failed.truncated);
+        assert!(failed.export_id.is_none());
     }
 
     #[test]
@@ -269,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn counts_bytes_and_logical_lines_for_small_results_without_export() {
+    fn small_results_export_the_exact_bytes_and_report_full_counts() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("raw.txt");
         let store = ResultStore::default();
@@ -286,7 +301,12 @@ mod tests {
             assert_eq!(report.result, text);
             assert_eq!(report.line_count, lines);
             assert_eq!(report.byte_count, text.len() as u64);
-            assert!(report.export_id.is_none());
+            assert!(!report.truncated);
+            let exported = dir.path().join("export.txt");
+            store
+                .export(report.export_id.as_ref().unwrap(), &exported)
+                .unwrap();
+            assert_eq!(fs::read(exported).unwrap(), text.as_bytes());
         }
     }
 
@@ -309,14 +329,18 @@ mod tests {
         fs::write(&path, &exact).unwrap();
         let report = trim_files(std::slice::from_ref(&path), &options(), &store).unwrap();
         assert_eq!(report.result, exact);
-        assert!(report.export_id.is_none());
+        assert!(!report.truncated);
+        let exact_id = report.export_id.unwrap();
         let text = format!("{}😀\nend", &exact[1..]);
         fs::write(&path, &text).unwrap();
         let report = trim_files(&[path], &options(), &store).unwrap();
         assert_eq!(report.result, &exact[1..]);
         assert_eq!(report.byte_count, text.len() as u64);
         assert_eq!(report.line_count, 2);
+        assert!(report.truncated);
         let exported = dir.path().join("out.txt");
+        store.export(&exact_id, &exported).unwrap();
+        assert_eq!(fs::read(&exported).unwrap(), exact.as_bytes());
         store
             .export(report.export_id.as_ref().unwrap(), &exported)
             .unwrap();
@@ -349,15 +373,16 @@ mod tests {
                 assert_eq!(report.line_count, 2);
                 assert_eq!(report.byte_count, expected.len() as u64);
                 if initial.len() <= PREVIEW_BYTES {
-                    assert!(report.export_id.is_none());
+                    assert!(!report.truncated);
                     assert_eq!(report.result, expected);
                 } else {
-                    let exported = dir.path().join("rollback.txt");
-                    store
-                        .export(report.export_id.as_ref().unwrap(), &exported)
-                        .unwrap();
-                    assert_eq!(fs::read_to_string(exported).unwrap(), expected);
+                    assert!(report.truncated);
                 }
+                let exported = dir.path().join("rollback.txt");
+                store
+                    .export(report.export_id.as_ref().unwrap(), &exported)
+                    .unwrap();
+                assert_eq!(fs::read_to_string(exported).unwrap(), expected);
             }
         }
     }

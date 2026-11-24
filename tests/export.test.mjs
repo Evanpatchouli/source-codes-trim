@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { createSourceWorkspace } from "../src/hooks/useSourceWorkspace.ts";
 
-const largeResult = (id) => ({ result: "预览", processed: 1, skipped: [], byteCount: 500000, lineCount: 3000, exportId: id });
+const largeResult = (id) => ({ result: "预览", processed: 1, skipped: [], byteCount: 500000, lineCount: 3000, truncated: true, exportId: id });
 
 async function setup(t) {
   globalThis.window = {};
@@ -80,6 +80,33 @@ test("取消保存保持当前结果，写入失败可以重试，重复点击�
   assert.deepEqual(io.writes, Array(2).fill({ id: "current", path: "full.txt" }));
   assert.equal(workspace.getSnapshot().exportFeedback.ok, true);
   assert.equal(workspace.getSnapshot().trimReport.exportId, "current");
+});
+
+test("短文本与零字节文件可导出，取消和失败保留当前句柄，替换后会释放", async (t) => {
+  const { workspace, io } = await setup(t);
+  for (const [result, id] of [["你好 🌱\n", "short"], ["", "empty"]]) {
+    io.result = {
+      result, processed: 1, skipped: [], byteCount: Buffer.byteLength(result),
+      lineCount: result ? 1 : 0, truncated: false, exportId: id,
+    };
+    await workspace.trimFiles();
+    assert.equal(workspace.getSnapshot().trimReport.truncated, false);
+    assert.equal(workspace.getSnapshot().content, result);
+    const before = io.writes.length;
+    io.path = null;
+    await workspace.exportResult();
+    assert.equal(io.writes.length, before);
+    io.path = id + ".txt";
+    io.write = () => { throw new Error("无法写入"); };
+    await workspace.exportResult();
+    assert.match(workspace.getSnapshot().exportFeedback.message, /无法写入/);
+    io.write = () => {};
+    await workspace.exportResult();
+    assert.deepEqual(io.writes.at(-1), { id, path: io.path });
+    assert.equal(workspace.getSnapshot().exportFeedback.ok, true);
+  }
+  workspace.clearOutput();
+  assert.deepEqual(io.released, ["short", "empty"]);
 });
 
 test("过期对话框不会开始写入，已经开始的写入结束后释放且不回填旧反馈", async (t) => {
