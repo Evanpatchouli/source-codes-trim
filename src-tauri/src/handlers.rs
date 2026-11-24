@@ -1,4 +1,4 @@
-use regex::Regex;
+use crate::filter::{FileFilter, Inclusion};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -11,82 +11,11 @@ pub struct FileItem {
     children: Vec<FileItem>,
 }
 
-// 所有空行或者以 ＃ 开头的行都会被忽略。
-// 可以使用标准的 glob 模式匹配。
-// 匹配模式可以以（/）开头防止递归。
-// 匹配模式可以以（/）结尾指定目录。
-// 要忽略指定模式以外的文件或目录，可以在模式前加上惊叹号（!）取反。
-fn glob_pattern_to_regex(pattern: &str) -> String {
-    // 将所有的 / 替换为 \\，以便在正则表达式中正确匹配路径分隔符
-    let pattern = pattern.replace("/", "\\");
-
-    if pattern.trim().is_empty() || pattern.starts_with('#') {
-        return String::new();
-    }
-
-    let mut regex = String::from("^");
-    let mut chars = pattern.chars().peekable();
-
-    if pattern.starts_with('!') {
-        regex.push_str("(?!");
-        chars.next();
-    }
-
-    if pattern.starts_with('\\') {
-        chars.next();
-    } else {
-        regex.push_str("(.*/)?");
-    }
-
-    while let Some(ch) = chars.next() {
-        match ch {
-            '*' => {
-                if chars.peek() == Some(&'*') {
-                    chars.next();
-                    regex.push_str(".*");
-                } else {
-                    regex.push_str("[^\\\\/]*");
-                }
-            }
-            '?' => regex.push('.'),
-            '.' => regex.push_str("\\."),
-            '\\' => regex.push_str("[\\\\/]"),
-            _ => regex.push_str(&regex::escape(&ch.to_string())),
-        }
-    }
-
-    if pattern.ends_with('\\') {
-        regex.push_str("[\\\\/]");
-    } else {
-        regex.push('$');
-    }
-
-    if pattern.starts_with('!') {
-        regex.push(')');
-    }
-
-    regex
-}
-
-fn compile_patterns(patterns: Vec<&str>) -> Vec<Regex> {
-    patterns
-        .into_iter()
-        .filter_map(|pattern| {
-            let regex_pattern = glob_pattern_to_regex(pattern);
-            if regex_pattern.is_empty() {
-                None
-            } else {
-                Regex::new(&regex_pattern).ok()
-            }
-        })
-        .collect()
-}
-
 #[tauri::command]
 pub fn get_files(
     path: &str,
-    includes: Vec<&str>,
-    excludes: Vec<&str>,
+    includes: &str,
+    excludes: &str,
     exclude_empty_dirs: bool,
 ) -> Result<Vec<FileItem>, String> {
     let mut files = Vec::new();
@@ -96,14 +25,13 @@ pub fn get_files(
         return Err(format!("路径不存在: {}", path));
     }
 
-    let include_patterns = compile_patterns(includes);
-    let exclude_patterns = compile_patterns(excludes);
+    let filter = FileFilter::new(includes, excludes)?;
 
     fn read_dir_recursive(
         root_path_str: &str,
         path: &Path,
-        include_patterns: &Vec<Regex>,
-        exclude_patterns: &Vec<Regex>,
+        filter: &FileFilter,
+        inherited: Inclusion,
         files: &mut Vec<FileItem>,
         exclude_empty_dirs: bool,
     ) -> Result<(), String> {
@@ -117,21 +45,13 @@ pub fn get_files(
             let file_path = entry.path();
             let file_path_str = file_path.display().to_string();
             let file_relative_path = file_path.strip_prefix(root_path_str).unwrap();
-            let file_relative_path_str = file_relative_path.display().to_string();
             let is_dir = file_path.is_dir();
 
-            if exclude_patterns.iter().any(|pattern| {
-                pattern.is_match(file_name_str) || pattern.is_match(&file_relative_path_str)
-            }) {
+            if filter.excluded(file_relative_path, is_dir) {
                 continue;
             }
-
-            if !is_dir
-                && (include_patterns.is_empty()
-                    || include_patterns.iter().any(|pattern| {
-                        pattern.is_match(file_name_str) || pattern.is_match(&file_relative_path_str)
-                    }))
-            {
+            let inclusion = filter.inclusion(file_relative_path, is_dir, inherited);
+            if !is_dir && inclusion.selected {
                 children.push(FileItem {
                     path: file_path_str.clone(),
                     name: file_name_str.to_string(),
@@ -143,8 +63,8 @@ pub fn get_files(
                 read_dir_recursive(
                     &root_path_str,
                     &file_path,
-                    include_patterns,
-                    exclude_patterns,
+                    filter,
+                    inclusion,
                     &mut sub_children,
                     exclude_empty_dirs,
                 )?;
@@ -166,8 +86,8 @@ pub fn get_files(
     read_dir_recursive(
         &root_path_str,
         Path::new(path),
-        &include_patterns,
-        &exclude_patterns,
+        &filter,
+        filter.default_inclusion(),
         &mut files,
         exclude_empty_dirs,
     )?;

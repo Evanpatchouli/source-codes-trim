@@ -1,3 +1,4 @@
+mod filter;
 mod handlers;
 mod source_text;
 

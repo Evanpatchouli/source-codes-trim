@@ -12,8 +12,8 @@ type InvokeMap = {
   get_files: {
     args: {
       path: string;
-      includes: string[];
-      excludes: string[];
+      includes: string;
+      excludes: string;
       excludeEmptyDirs: boolean;
     };
     returns: FileItem[];

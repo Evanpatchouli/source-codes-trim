@@ -7,7 +7,6 @@ import FileTree, { TreeRef } from "#components/FileTree";
 import flatternFileTree from "#utils/flatternFileTree";
 import { Resizable } from "re-resizable";
 import invoke from "#utils/invoke";
-import parseCludes from "./utils/parseCludes";
 import Loading from "./components/Loading";
 import sleep from "./utils/sleep";
 import Tip from "./components/Tip";
@@ -277,8 +276,8 @@ function App() {
                       const timestart = performance.now();
                       const files = await invoke("get_files", {
                         path: root,
-                        includes: parseCludes(includes),
-                        excludes: parseCludes(excludes),
+                        includes,
+                        excludes,
                         excludeEmptyDirs: exclude_empty_dirs,
                       });
                       const timeend = performance.now();
