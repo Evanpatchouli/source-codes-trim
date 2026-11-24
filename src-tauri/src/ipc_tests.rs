@@ -32,6 +32,8 @@ fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("code.ts");
     fs::write(&file, "let n = 3; // note\n").unwrap();
+    let moved_first = dir.path().join("z-first.ts");
+    fs::write(&moved_first, "init(); // moved to top").unwrap();
     let options = |path: &Path| {
         json!({
             "path": path, "includes": "*.ts", "excludes": "", "excludeEmptyDirs": true
@@ -42,14 +44,15 @@ fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
     let trim = invoke(
         "trim_source_codes",
         json!({
-            "files": [&file], "trimWhitespace": true, "trimNewlines": true, "trimComments": true
+            "files": [&moved_first, &file], "trimWhitespace": true, "trimNewlines": true, "trimComments": true
         }),
     )
     .unwrap();
-    assert_eq!(trim["result"], "let n = 3;\n");
-    assert_eq!(trim["processed"], 1);
-    assert_eq!(trim["lineCount"], 1);
-    assert_eq!(trim["byteCount"], "let n = 3;\n".len());
+    let ordered = "init();\nlet n = 3;\n";
+    assert_eq!(trim["result"], ordered);
+    assert_eq!(trim["processed"], 2);
+    assert_eq!(trim["lineCount"], 2);
+    assert_eq!(trim["byteCount"], ordered.len());
     assert!(trim["exportId"].is_null());
 
     let large_file = dir.path().join("large.txt");

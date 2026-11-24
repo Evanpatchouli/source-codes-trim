@@ -28,7 +28,7 @@ function App() {
   const {
     options: { path: root, includes, excludes, excludeEmptyDirs },
     files, ignoredPaths, scanIssues, scanError, treeLoading, content, contentState, trimReport,
-    setOption, toggleIgnored, clearOutput, scanFiles, trimFiles, exportResult, exporting, exportFeedback,
+    setOption, toggleIgnored, moveFile, clearOutput, scanFiles, trimFiles, exportResult, exporting, exportFeedback,
   } = useSourceWorkspace();
   const truncated = Boolean(trimReport?.exportId);
 
@@ -108,7 +108,14 @@ function App() {
                 </Text>
               </Tooltip>
             </header>
-            <FileTree key={root} items={files} ignoredPaths={ignoredPaths} onToggleIgnored={toggleIgnored} loading={treeLoading} />
+            <FileTree
+              key={root}
+              items={files}
+              ignoredPaths={ignoredPaths}
+              onToggleIgnored={toggleIgnored}
+              onMove={moveFile}
+              loading={treeLoading}
+            />
           </Resizable>
           <Box
             id="main-viewbox"

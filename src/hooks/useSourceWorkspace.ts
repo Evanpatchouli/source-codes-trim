@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import selectedFilePaths from "../utils/selectedFilePaths.ts";
+import moveFileTreeItem, { type TreeDropPosition } from "../utils/moveFileTreeItem.ts";
 import invoke, { errorMessage } from "../utils/invoke.ts";
 
 type ScanOptions = { path: string; includes: string; excludes: string; excludeEmptyDirs: boolean };
@@ -57,6 +58,14 @@ export function createSourceWorkspace() {
   function clearOutput() {
     trimRequest++;
     update(emptyOutput);
+  }
+
+  function moveFile(sourcePath: string, targetPath: string, position: TreeDropPosition) {
+    const files = moveFileTreeItem(state.files, sourcePath, targetPath, position);
+    if (files === state.files) return false;
+    trimRequest++;
+    update({ files, ...emptyOutput });
+    return true;
   }
 
   async function scanFiles() {
@@ -138,6 +147,7 @@ export function createSourceWorkspace() {
     dispose,
     setOption,
     toggleIgnored,
+    moveFile,
     clearOutput,
     scanFiles,
     trimFiles,
@@ -153,6 +163,7 @@ export default function useSourceWorkspace() {
     ...state,
     setOption: workspace.setOption,
     toggleIgnored: workspace.toggleIgnored,
+    moveFile: workspace.moveFile,
     clearOutput: workspace.clearOutput,
     scanFiles: workspace.scanFiles,
     trimFiles: workspace.trimFiles,

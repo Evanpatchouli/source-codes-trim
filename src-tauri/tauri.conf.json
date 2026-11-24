@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "dragDropEnabled": false,
         "title": "源码整理器",
         "width": 1024,
         "height": 780,
