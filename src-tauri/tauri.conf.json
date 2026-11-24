@@ -17,6 +17,8 @@
         "title": "源码整理器",
         "width": 1024,
         "height": 780,
+        "minWidth": 1024,
+        "minHeight": 780,
         "shadow": true,
         "decorations": false,
         "transparent": true,
