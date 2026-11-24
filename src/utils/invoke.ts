@@ -1,6 +1,14 @@
 import { invoke as raw_invoke } from "@tauri-apps/api/core";
 
 type InvokeMap = {
+  read_source_plan: {
+    args: { path: string };
+    returns: string;
+  };
+  write_source_plan: {
+    args: { path: string; content: string };
+    returns: void;
+  };
   get_files: {
     args: {
       path: string;

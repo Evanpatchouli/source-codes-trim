@@ -1,10 +1,11 @@
 import { useRef, useState } from "react";
 import { open as select } from "@tauri-apps/plugin-dialog";
 import { Box, Button, Flex, FormLabel, Input, Switch, Text, Textarea, Tooltip } from "@chakra-ui/react";
-import { AddIcon, CopyIcon } from "@chakra-ui/icons";
+import { CopyIcon } from "@chakra-ui/icons";
 import TitleBar from "#components/TitleBar";
 import FileTree from "#components/FileTree";
 import FileIssues from "#components/FileIssues";
+import PlanChanges from "#components/PlanChanges";
 import { Resizable } from "re-resizable";
 import invoke, { errorMessage } from "#utils/invoke";
 import Loading from "./components/Loading";
@@ -29,10 +30,11 @@ function App() {
     options: { path: root, includes, excludes, excludeEmptyDirs },
     files, ignoredPaths, scanIssues, scanError, treeLoading, content, contentState, trimReport,
     setOption, toggleIgnored, moveFile, clearOutput, scanFiles, trimFiles, exportResult, exporting, exportFeedback,
+    openPlan, savePlan, hasScan, planChanges, planBusy, planFeedback,
   } = useSourceWorkspace();
   const truncated = Boolean(trimReport?.exportId);
 
-  const disable_trim_source_codes = files.length === 0;
+  const disable_trim_source_codes = files.length === 0 || treeLoading || planBusy === "open";
 
   const openRoot = () =>
     root &&
@@ -196,8 +198,8 @@ function App() {
                   }}
                 />
               </Flex>
-              <Flex alignItems="center" w="100%" justifyContent="space-between">
-                <Flex alignItems="center" flex="1" gap="1rem">
+              <Flex alignItems="center" w="100%" justifyContent="space-between" flexWrap="wrap" gap={2}>
+                <Flex alignItems="center" gap={2} flexWrap="wrap">
                   <Flex alignItems="center">
                     <FormLabel htmlFor="exclude_empty_dirs" mb={0} size="sm">
                       去除空文件夹:
@@ -209,9 +211,11 @@ function App() {
                       size="sm"
                     />
                   </Flex>
-                  <Button variant="ghost" size="sm" color="GrayText" hidden>
-                    <Text>更多</Text>
-                    <AddIcon ml="0.3rem" />
+                  <Button variant="outline" size="sm" onClick={openPlan} isDisabled={!root || treeLoading || !!planBusy}>
+                    {planBusy === "open" ? "正在打开…" : "打开方案"}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={savePlan} isDisabled={!hasScan || treeLoading || !!planBusy}>
+                    {planBusy === "save" ? "正在保存…" : "保存方案"}
                   </Button>
                 </Flex>
                 <Flex columnGap="0.5rem" alignItems="center">
@@ -258,6 +262,12 @@ function App() {
             </Box>
             {scanError && <Text role="alert" color="red.600" fontSize="sm">{scanError}</Text>}
             <FileIssues label="扫描" issues={scanIssues} />
+            {planFeedback && (
+              <Text role={planFeedback.ok ? "status" : "alert"} fontSize="sm" color={planFeedback.ok ? "green.700" : "red.600"} overflowWrap="anywhere">
+                {planFeedback.message}
+              </Text>
+            )}
+            {planChanges && <PlanChanges {...planChanges} />}
             {trimReport && (
               <Text role="status" fontSize="sm">
                 已处理 {trimReport.processed} 个文件

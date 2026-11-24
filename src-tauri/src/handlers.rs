@@ -1,4 +1,5 @@
 use crate::filter::FileFilter;
+use crate::plan_file;
 use crate::result_store::ResultStore;
 use crate::scanner::{scan, ScanResult};
 use crate::source_text::TrimOptions;
@@ -25,6 +26,16 @@ pub async fn get_files(
         scan(&path, &filter, exclude_empty_dirs)
     })
     .await
+}
+
+#[tauri::command]
+pub async fn read_source_plan(path: PathBuf) -> Result<String, String> {
+    run_blocking(move || plan_file::read(&path)).await
+}
+
+#[tauri::command]
+pub async fn write_source_plan(path: PathBuf, content: String) -> Result<(), String> {
+    run_blocking(move || plan_file::write(&path, &content)).await
 }
 
 #[tauri::command]

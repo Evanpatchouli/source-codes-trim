@@ -84,4 +84,25 @@ fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
     assert!(error.as_str().unwrap().contains("missing"), "{error}");
     let error = invoke("open_directory_in_fs", json!({ "path": &file })).unwrap_err();
     assert!(error.as_str().unwrap().contains("不是目录"), "{error}");
+
+    let plan = dir.path().join("工作方案.SCTPLAN");
+    let text = "{\n  \"title\": \"项目🌳\"\n}\n";
+    fs::write(&plan, "previous").unwrap();
+    let saved = invoke(
+        "write_source_plan",
+        json!({ "path": &plan, "content": text }),
+    )
+    .unwrap();
+    assert!(saved.is_null());
+    assert_eq!(
+        invoke("read_source_plan", json!({ "path": &plan })).unwrap(),
+        json!(text)
+    );
+    assert!(invoke("write_source_plan", json!({ "path": null, "content": "" })).is_err());
+    assert_eq!(fs::read_to_string(&plan).unwrap(), text);
+    for cmd in ["read_source_plan", "write_source_plan"] {
+        let error = invoke(cmd, json!({ "path": &file, "content": "overwrite" })).unwrap_err();
+        assert!(error.as_str().unwrap().contains(".sctplan"), "{error}");
+    }
+    assert_eq!(fs::read_to_string(&file).unwrap(), "let n = 3; // note\n");
 }

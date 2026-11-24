@@ -1,10 +1,17 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import selectedFilePaths from "../utils/selectedFilePaths.ts";
 import moveFileTreeItem, { type TreeDropPosition } from "../utils/moveFileTreeItem.ts";
 import invoke, { errorMessage } from "../utils/invoke.ts";
+import { applySourcePlan, createSourcePlan, parseSourcePlan, type PlanFilters, type SourcePlan } from "../utils/sourcePlan.ts";
 
-type ScanOptions = { path: string; includes: string; excludes: string; excludeEmptyDirs: boolean };
+type ScanOptions = PlanFilters & { path: string };
+type Layout = { files: FileItem[]; ignoredPaths: ReadonlySet<string> };
+type PlanChanges = { added: string[]; missing: string[] };
+type PlanActivity = {
+  planBusy: "open" | "save" | null;
+  planFeedback: { ok: boolean; message: string } | null;
+};
 type Output = {
   content: string;
   contentState: "loading" | "loaded" | "error";
@@ -16,7 +23,12 @@ type Output = {
 const emptyOutput: Output = {
   content: "", contentState: "loaded", trimReport: null, exporting: false, exportFeedback: null,
 };
-const emptyScan = { files: [] as FileItem[], scanIssues: [] as FileIssue[], scanError: "", treeLoading: false };
+const emptyScan = {
+  files: [] as FileItem[], scanIssues: [] as FileIssue[], scanError: "", treeLoading: false,
+  hasScan: false, planChanges: null as PlanChanges | null,
+};
+const emptyPlanActivity: PlanActivity = { planBusy: null, planFeedback: null };
+const planFileFilter = [{ name: "源码整理方案", extensions: ["sctplan"] }];
 const initialOptions: ScanOptions = { path: "", includes: "", excludes: "", excludeEmptyDirs: true };
 
 function releaseResult(id: string) {
@@ -24,9 +36,11 @@ function releaseResult(id: string) {
 }
 
 export function createSourceWorkspace() {
-  let state = { options: initialOptions, ...emptyScan, ...emptyOutput, ignoredPaths: new Set<string>() };
+  let state = { options: initialOptions, ...emptyScan, ...emptyOutput, ...emptyPlanActivity, ignoredPaths: new Set<string>() };
+  let previousLayout: Layout | null = null;
   let scanRequest = 0;
   let trimRequest = 0;
+  let planRequest = 0;
   const writing = new Set<string>();
   const listeners = new Set<() => void>();
   function update(patch: Partial<typeof state>) {
@@ -39,20 +53,23 @@ export function createSourceWorkspace() {
   function invalidateRequests() {
     scanRequest++;
     trimRequest++;
+    planRequest++;
   }
 
   function setOption<K extends keyof ScanOptions>(key: K, value: ScanOptions[K]) {
     if (state.options[key] === value) return;
+    if (key === "path") previousLayout = null;
+    else if (state.hasScan) previousLayout = { files: state.files, ignoredPaths: state.ignoredPaths };
     invalidateRequests();
-    update({ options: { ...state.options, [key]: value }, ...emptyScan, ...emptyOutput, ignoredPaths: new Set() });
+    update({ options: { ...state.options, [key]: value }, ...emptyScan, ...emptyOutput, ...emptyPlanActivity, ignoredPaths: new Set() });
   }
 
   function toggleIgnored(path: string) {
-    trimRequest++;
+    invalidateRequests();
     const ignoredPaths = new Set(state.ignoredPaths);
     if (ignoredPaths.has(path)) ignoredPaths.delete(path);
     else ignoredPaths.add(path);
-    update({ ignoredPaths, ...emptyOutput });
+    update({ ignoredPaths, treeLoading: false, ...emptyOutput, ...emptyPlanActivity });
   }
 
   function clearOutput() {
@@ -63,28 +80,88 @@ export function createSourceWorkspace() {
   function moveFile(sourcePath: string, targetPath: string, position: TreeDropPosition) {
     const files = moveFileTreeItem(state.files, sourcePath, targetPath, position);
     if (files === state.files) return false;
-    trimRequest++;
-    update({ files, ...emptyOutput });
+    invalidateRequests();
+    update({ files, treeLoading: false, ...emptyOutput, ...emptyPlanActivity });
     return true;
+  }
+
+  function applyScan(options: ScanOptions, scan: ScanResult, plan: SourcePlan | null) {
+    const restored = plan && applySourcePlan(options.path, scan.files, plan);
+    previousLayout = null;
+    trimRequest++;
+    update({
+      options,
+      files: restored?.files ?? scan.files,
+      ignoredPaths: restored?.ignoredPaths ?? new Set(),
+      planChanges: restored ? { added: restored.added, missing: restored.missing } : null,
+      hasScan: true, treeLoading: false, scanIssues: scan.skipped, scanError: "", ...emptyOutput,
+    });
   }
 
   async function scanFiles() {
     const options = state.options;
     if (!options.path) return;
     const request = ++scanRequest;
-    trimRequest++;
-    update({ ...emptyScan, ...emptyOutput, treeLoading: true, ignoredPaths: new Set() });
+    planRequest++;
+    const layout = state.hasScan ? { files: state.files, ignoredPaths: state.ignoredPaths } : previousLayout;
+    update({ treeLoading: true, scanError: "", ...emptyPlanActivity });
     try {
       const scan = await invoke("get_files", options);
-      if (request === scanRequest) update({ files: scan.files, scanIssues: scan.skipped, treeLoading: false });
+      if (request !== scanRequest) return;
+      const { path, ...filters } = options;
+      const plan = layout ? createSourcePlan(path, layout.files, layout.ignoredPaths, filters) : null;
+      applyScan(options, scan, plan);
     } catch (error) {
       if (request === scanRequest) update({ scanError: `扫描失败：${errorMessage(error)}`, treeLoading: false });
     }
   }
 
+  async function openPlan() {
+    const root = state.options.path;
+    if (!root || state.treeLoading || state.planBusy) return;
+    const request = ++planRequest;
+    update({ planBusy: "open" });
+    try {
+      const path = await open({ title: "打开整理方案", defaultPath: root, filters: planFileFilter, multiple: false });
+      if (!path || request !== planRequest) return;
+      const text = await invoke("read_source_plan", { path });
+      if (request !== planRequest) return;
+      const plan = parseSourcePlan(text);
+      const options = { ...plan.filters, path: root };
+      const scan = await invoke("get_files", options);
+      if (request !== planRequest) return;
+      applyScan(options, scan, plan);
+      update({ planFeedback: { ok: true, message: `已应用方案：${path}` } });
+    } catch (error) {
+      if (request === planRequest) update({ planFeedback: { ok: false, message: `打开方案失败：${errorMessage(error)}` } });
+    } finally {
+      if (request === planRequest) update({ planBusy: null });
+    }
+  }
+
+  async function savePlan() {
+    if (!state.hasScan || state.treeLoading || state.planBusy) return;
+    const request = ++planRequest;
+    const { path: root, ...filters } = state.options;
+    const separator = root.includes("\\") ? "\\" : "/";
+    const defaultPath = root.replace(/[\\/]$/, "") + separator + "整理方案.sctplan";
+    update({ planBusy: "save" });
+    try {
+      const path = await save({ title: "保存整理方案", defaultPath, filters: planFileFilter });
+      if (!path || request !== planRequest) return;
+      const plan = createSourcePlan(root, state.files, state.ignoredPaths, filters);
+      await invoke("write_source_plan", { path, content: JSON.stringify(plan, null, 2) });
+      if (request === planRequest) update({ planFeedback: { ok: true, message: `已保存方案：${path}` } });
+    } catch (error) {
+      if (request === planRequest) update({ planFeedback: { ok: false, message: `保存方案失败：${errorMessage(error)}` } });
+    } finally {
+      if (request === planRequest) update({ planBusy: null });
+    }
+  }
+
   async function trimFiles() {
     const { files, ignoredPaths } = state;
-    if (!files.length) return;
+    if (!files.length || state.treeLoading || state.planBusy === "open") return;
     const request = ++trimRequest;
     update({ ...emptyOutput, contentState: "loading" });
     try {
@@ -133,7 +210,8 @@ export function createSourceWorkspace() {
 
   function dispose() {
     invalidateRequests();
-    update(emptyOutput);
+    previousLayout = null;
+    update({ ...emptyOutput, ...emptyPlanActivity });
   }
 
   function subscribe(notify: () => void) {
@@ -150,6 +228,8 @@ export function createSourceWorkspace() {
     moveFile,
     clearOutput,
     scanFiles,
+    openPlan,
+    savePlan,
     trimFiles,
     exportResult,
   };
@@ -166,6 +246,8 @@ export default function useSourceWorkspace() {
     moveFile: workspace.moveFile,
     clearOutput: workspace.clearOutput,
     scanFiles: workspace.scanFiles,
+    openPlan: workspace.openPlan,
+    savePlan: workspace.savePlan,
     trimFiles: workspace.trimFiles,
     exportResult: workspace.exportResult,
   };

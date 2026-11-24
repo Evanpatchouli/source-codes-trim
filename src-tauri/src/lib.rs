@@ -1,6 +1,7 @@
 mod file_issue;
 mod filter;
 mod handlers;
+mod plan_file;
 mod result_store;
 mod scanner;
 mod source_text;
@@ -11,6 +12,8 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         .manage(result_store::ResultStore::default())
         .invoke_handler(tauri::generate_handler![
             handlers::get_files,
+            handlers::read_source_plan,
+            handlers::write_source_plan,
             handlers::trim_source_codes,
             handlers::export_trim_result,
             handlers::release_trim_result,

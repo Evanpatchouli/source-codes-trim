@@ -1,6 +1,7 @@
 use crate::{
     file_issue::FileIssue,
     filter::{FileFilter, Inclusion},
+    plan_file::is_plan_path,
 };
 use serde::Serialize;
 use std::{fs, io, path::Path};
@@ -93,6 +94,9 @@ impl Scanner<'_> {
         if !is_dir && !metadata.is_file() {
             return Err(FileIssue::new(&path, "已跳过特殊文件"));
         }
+        if metadata.is_file() && is_plan_path(&path) {
+            return Ok(None);
+        }
         let name = name
             .to_str()
             .ok_or_else(|| FileIssue::new(&path, "文件名无法用 UTF-8 表示"))?;
@@ -171,6 +175,26 @@ mod tests {
             .unwrap_err()
             .contains("missing"));
         assert!(scan(&root.join("a.txt"), &filter, false).is_err());
+    }
+
+    #[test]
+    fn excludes_plan_files_but_keeps_source_files_inside_a_similarly_named_directory() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let folder = root.join("source.SCTPLAN");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("main.rs"), "fn main() {}").unwrap();
+        fs::write(folder.join("local.scTpLaN"), "{}").unwrap();
+        for name in ["my.sctplan", ".SCTPLAN", "plan.sctplan.bak"] {
+            fs::write(root.join(name), "{}").unwrap();
+        }
+        let result = scan(root, &FileFilter::new("", "").unwrap(), true).unwrap();
+        assert!(result.skipped.is_empty());
+        assert_eq!(result.files.len(), 2);
+        assert_eq!(result.files[0].name, "source.SCTPLAN");
+        assert_eq!(result.files[0].children.len(), 1);
+        assert_eq!(result.files[0].children[0].name, "main.rs");
+        assert_eq!(result.files[1].name, "plan.sctplan.bak");
     }
 
     #[test]
