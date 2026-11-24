@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import flatternFileTree from "../utils/flatternFileTree.ts";
+import selectedFilePaths from "../utils/selectedFilePaths.ts";
 import invoke, { errorMessage } from "../utils/invoke.ts";
 import sleep from "../utils/sleep.ts";
 
@@ -83,13 +83,11 @@ export function createSourceWorkspace() {
     update({ ...emptyOutput, contentState: "loading" });
     const started = performance.now();
     try {
-      const ignored = [...ignoredPaths];
-      const pathList = flatternFileTree(files)
-        .filter((item) => !item.is_dir)
-        .map((item) => item.path)
-        .filter((path) => !ignored.some((prefix) => path.startsWith(prefix)));
       const { result, processed, skipped } = await invoke("trim_source_codes", {
-        files: pathList, trimWhitespace: true, trimNewlines: true, trimComments: true,
+        files: selectedFilePaths(files, ignoredPaths),
+        trimWhitespace: true,
+        trimNewlines: true,
+        trimComments: true,
       });
       await waitForLoading(started);
       if (request !== trimRequest) return;

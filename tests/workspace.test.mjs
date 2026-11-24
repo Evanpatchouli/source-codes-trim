@@ -21,6 +21,23 @@ const scanResult = (path) => ({
 });
 const trimResult = (result) => ({ result, processed: 1, skipped: [] });
 
+test("将原先排除的目录设为新根后可整理其中的文件", async (t) => {
+  const { workspace, pending } = setup(t);
+  const child = scanResult("A/lib/main.ts").files[0];
+  const scan = workspace.scanFiles();
+  pending[0].resolve({ files: [{ path: "A/lib", name: "lib", is_dir: true, children: [child] }], skipped: [] });
+  await scan;
+  workspace.toggleIgnored("A/lib");
+  workspace.setOption("path", "A/lib");
+  const rescan = workspace.scanFiles();
+  pending[1].resolve({ files: [child], skipped: [] });
+  await rescan;
+  const trim = workspace.trimFiles();
+  assert.deepEqual(pending[2].args.files, ["A/lib/main.ts"]);
+  pending[2].resolve(trimResult("ok"));
+  await trim;
+});
+
 test("目录 A→B→A、扫描逆序和过期错误均不影响当前扫描", async (t) => {
   const { workspace, pending } = setup(t);
   const firstA = workspace.scanFiles();

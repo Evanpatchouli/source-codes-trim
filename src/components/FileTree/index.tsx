@@ -1,143 +1,75 @@
-import React, { useState, useCallback } from "react";
-import "./index.css";
+import { useState } from "react";
+import { Flex, IconButton, Tooltip } from "@chakra-ui/react";
+import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import classes from "#/utils/classes";
-import { DragHandleIcon, Flex, IconButton, Tooltip, ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import Loading from "../Loading";
-
-type FileItem = {
-  path: string;
-  name: string;
-  is_dir: boolean;
-  children: Array<FileItem>;
-};
-
-type TreeNode<Data = any> = {
-  parent: TreeNode<Data> | null;
-  data: Data;
-  children: Array<TreeNode<Data>>;
-};
-
-type Tree<Data> = TreeNode<Data>[];
-
-const formatTree = (data: FileItem[]): Tree<FileItem> => {
-  const buildTree = (item: FileItem, parent: TreeNode<FileItem> | null): TreeNode<FileItem> => {
-    return {
-      parent,
-      data: item,
-      children: item.children.map((child) => buildTree(child, parent)),
-    };
-  };
-
-  return data.map((item) => buildTree(item, null));
-};
+import "./index.css";
 
 interface FileTreeProps {
-  items: Array<FileItem>;
+  items: FileItem[];
   ignoredPaths: ReadonlySet<string>;
   onToggleIgnored: (path: string) => void;
   loading?: boolean;
 }
 
-const grabable: boolean = false;
+export default function FileTree({ items, ignoredPaths, onToggleIgnored, loading }: FileTreeProps) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-export default function FileTree(props: FileTreeProps) {
-  const [expanded, setExpanded] = useState<{ [key: string]: boolean }>({});
-
-  const toggleExpand = useCallback((path: string) => {
-    setExpanded((prev) => ({ ...prev, [path]: !prev[path] }));
-  }, []);
-
-  const handleLeftClick = useCallback((item: FileItem) => {
-    if (item.is_dir) {
-      toggleExpand(item.path);
-    } else {
-      console.log("Clicked on file", item);
-    }
-  }, []);
-
-  const handleRightClick = useCallback((item: FileItem, event: React.MouseEvent) => {
-    event.preventDefault();
-    console.log("Right click on", item);
-  }, []);
-
-  const handleDragStart = useCallback((item: FileItem, event: React.DragEvent) => {
-    event.dataTransfer.setData("text/plain", item.path);
-    console.log("Drag start on", item);
-  }, []);
-
-  const handleDrop = useCallback((item: FileItem, event: React.DragEvent) => {
-    event.preventDefault();
-    const targetPath = event.dataTransfer.getData("text/plain");
-    console.log(`Dropped on ${targetPath}`, item);
-  }, []);
-
-  const renderTree = (node: TreeNode<FileItem>, root: boolean) => {
-    const isExpanded = expanded[node.data.path];
-    const isIgnored = props.ignoredPaths.has(node.data.path);
+  function renderNode(item: FileItem, root: boolean, parentIgnored: boolean) {
+    const isExpanded = !!expanded[item.path];
+    const isIgnored = parentIgnored || ignoredPaths.has(item.path);
+    const action = parentIgnored ? "已随上级目录排除" : isIgnored ? "恢复包含" : "排除";
+    const name = (
+      <>
+        <span aria-hidden="true">{item.is_dir ? (isExpanded ? "📂" : "📁") : "📄"}</span> {item.name}
+      </>
+    );
     return (
-      <div key={node.data.path} className={classes("tree", root && "tree-root")}>
-        <div
-          onClick={() => handleLeftClick(node.data)}
-          onContextMenu={(e) => handleRightClick(node.data, e)}
-          draggable={grabable}
-          onDragStart={(e) => handleDragStart(node.data, e)}
-          onDrop={(e) => handleDrop(node.data, e)}
-          className={classes("tree-item", root && "tree-item-root", isIgnored && "tree-item-ignored")}
-        >
-          <span style={{ flex: "1", overflow: "hidden", textOverflow: "ellipsis" }}>
-            <i className="tree-item-i">{node.data.is_dir ? (isExpanded ? "📂" : "📁") : "📄"}</i>
-            <span>{node.data.name}</span>
-          </span>
-          <Flex gap="0.2rem" alignItems="center" className="actions">
-            <Tooltip label={isIgnored ? "应排除" : "应包含"} placement="bottom" hasArrow>
+      <div key={item.path} className={classes("tree", root && "tree-root")}>
+        <div className={classes("tree-item", root && "tree-item-root", isIgnored && "tree-item-ignored")}>
+          {item.is_dir ? (
+            <button
+              type="button"
+              className="tree-name"
+              aria-expanded={isExpanded}
+              onClick={() => setExpanded((prev) => ({ ...prev, [item.path]: !prev[item.path] }))}
+            >
+              {name}
+            </button>
+          ) : (
+            <span className="tree-name">{name}</span>
+          )}
+          <Tooltip label={action} placement="bottom" hasArrow>
+            <span className="actions">
               <IconButton
-                aria-label={isIgnored ? "应排除" : "应包含"}
+                aria-label={`${action} ${item.name}`}
                 variant="ghost"
                 size="sm"
+                isDisabled={parentIgnored}
                 color={isIgnored ? "red.400" : "blue.400"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  props.onToggleIgnored(node.data.path);
-                }}
+                onClick={() => onToggleIgnored(item.path)}
               >
                 {isIgnored ? <ViewOffIcon /> : <ViewIcon />}
               </IconButton>
-            </Tooltip>
-            <Tooltip label={grabable ? "拖拽排序" : "拖拽排序尚未支持"} placement="bottom" hasArrow>
-              <DragHandleIcon cursor={grabable ? "grab" : "default"} color={grabable ? "blue.400" : "gray.300"} />
-            </Tooltip>
-          </Flex>
+            </span>
+          </Tooltip>
         </div>
-        {isExpanded && node.children.map((i) => renderTree(i, false))}
-      </div>
-    );
-  };
-
-  if (!props.items.length || props.loading) {
-    return (
-      <div
-        style={{
-          margin: 0,
-          textAlign: "center",
-          fontSize: "small",
-          color: "var(--chakra-colors-gray-300)",
-          marginTop: "calc((50vh - var(--header-height)) / 2)",
-          transform: "translateY(-50%)",
-        }}
-      >
-        {props.loading ? (
-          <Flex alignItems="center" justifyContent="center" gap="0.5rem">
-            <Loading mr={8} on />
-            <span>加载中...</span>
-          </Flex>
-        ) : (
-          "文件树空空如也"
-        )}
+        {item.is_dir && isExpanded && item.children.map((child) => renderNode(child, false, isIgnored))}
       </div>
     );
   }
 
-  const items = formatTree(props.items);
-
-  return <div className="tree-wrapper">{items.map((i) => renderTree(i, true))}</div>;
+  if (loading || !items.length) {
+    return (
+      <div className="tree-placeholder">
+        {loading ? (
+          <Flex alignItems="center" justifyContent="center" gap="0.5rem">
+            <Loading mr={8} on />
+            <span>加载中...</span>
+          </Flex>
+        ) : "文件树空空如也"}
+      </div>
+    );
+  }
+  return <div className="tree-wrapper">{items.map((item) => renderNode(item, true, false))}</div>;
 }
