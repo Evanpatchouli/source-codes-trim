@@ -3,6 +3,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import selectedFilePaths from "../utils/selectedFilePaths.ts";
 import moveFileTreeItem, { type TreeDropPosition } from "../utils/moveFileTreeItem.ts";
 import invoke, { errorMessage } from "../utils/invoke.ts";
+import type { LineSelection } from "../utils/lineSelection.ts";
 import { applySourcePlan, createSourcePlan, parseSourcePlan, type PlanFilters, type SourcePlan } from "../utils/sourcePlan.ts";
 
 type ScanOptions = PlanFilters & { path: string };
@@ -185,28 +186,36 @@ export function createSourceWorkspace() {
     }
   }
 
-  async function exportResult() {
+  async function exportResult(selection: LineSelection = { mode: "all" }, expectedId?: string) {
     const id = state.trimReport?.exportId;
-    if (!id || state.exporting) return;
+    if (!id || state.exporting || (expectedId !== undefined && expectedId !== id)) return;
     const request = trimRequest;
     update({ exporting: true });
     try {
       const path = await save({
-        title: "导出 TXT",
+        title: selection.mode === "all" ? "导出 TXT" : "按行导出 TXT",
         defaultPath: "整理后的源码.txt",
         filters: [{ name: "文本文件", extensions: ["txt"] }],
       });
       if (!path || request !== trimRequest) return;
       writing.add(id);
       try {
-        await invoke("export_trim_result", { id, path });
+        await invoke("export_trim_result", { id, path, selection });
       } finally {
         writing.delete(id);
         if (request !== trimRequest) releaseResult(id);
       }
-      if (request === trimRequest) update({ exportFeedback: { ok: true, message: `已导出至 ${path}` } });
+      if (request === trimRequest) {
+        const feedback = { ok: true, message: `已导出至 ${path}` };
+        update({ exportFeedback: feedback });
+        return feedback;
+      }
     } catch (error) {
-      if (request === trimRequest) update({ exportFeedback: { ok: false, message: `导出失败：${errorMessage(error)}` } });
+      if (request === trimRequest) {
+        const feedback = { ok: false, message: `导出失败：${errorMessage(error)}` };
+        update({ exportFeedback: feedback });
+        return feedback;
+      }
     } finally {
       if (request === trimRequest) update({ exporting: false });
     }

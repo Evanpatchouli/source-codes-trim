@@ -1,4 +1,5 @@
 use crate::filter::FileFilter;
+use crate::line_export::LineSelection;
 use crate::plan_file;
 use crate::result_store::{FilePreview, ResultStore};
 use crate::scanner::{scan, ScanResult};
@@ -71,9 +72,10 @@ pub async fn export_trim_result(
     store: tauri::State<'_, ResultStore>,
     id: String,
     path: PathBuf,
+    selection: Option<LineSelection>,
 ) -> Result<(), String> {
     let store = store.inner().clone();
-    run_blocking(move || store.export(&id, &path)).await
+    run_blocking(move || store.export_selected(&id, &path, &selection.unwrap_or_default())).await
 }
 
 #[tauri::command]

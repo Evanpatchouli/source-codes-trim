@@ -2,19 +2,21 @@ use serde_json::{json, Value};
 use std::{fs, path::Path};
 use tauri::{
     ipc::{CallbackFn, InvokeBody},
-    test::{get_ipc_response, mock_builder, mock_context, noop_assets, INVOKE_KEY},
+    test::{get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_KEY},
     webview::InvokeRequest,
 };
 
-#[test]
-fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
+fn start_ipc() -> (
+    tauri::App<MockRuntime>,
+    impl Fn(&str, Value) -> Result<Value, Value>,
+) {
     let app = source_codes_trim_lib::register_commands(mock_builder())
         .build(mock_context(noop_assets()))
         .unwrap();
     let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
         .unwrap();
-    let invoke = |cmd: &str, args: Value| {
+    let invoke = move |cmd: &str, args: Value| {
         get_ipc_response(
             &window,
             InvokeRequest {
@@ -29,6 +31,12 @@ fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
         )
         .map(|body| body.deserialize::<Value>().unwrap())
     };
+    (app, invoke)
+}
+
+#[test]
+fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
+    let (_app, invoke) = start_ipc();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("code.ts");
     fs::write(&file, "let n = 3; // note\n").unwrap();
@@ -185,4 +193,85 @@ fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
         assert!(error.as_str().unwrap().contains(".sctplan"), "{error}");
     }
     assert_eq!(fs::read_to_string(&file).unwrap(), "let n = 3; // note\n");
+}
+
+#[test]
+fn exports_selected_lines_from_the_full_snapshot_without_touching_previous_files_on_failure() {
+    let (_app, invoke) = start_ipc();
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("lines.txt");
+    let target = dir.path().join("export.txt");
+    let first = format!("{}🌈\r\n", "x".repeat(256 * 1024));
+    let middle = "第二行🙂\r\n第三行\n第四行\r";
+    let last = "结尾无换行";
+    let whole = format!("{first}{middle}{last}");
+    fs::write(&source, &whole).unwrap();
+    let trim_args = json!({
+        "files": [&source], "trimWhitespace": true, "trimNewlines": true, "trimComments": true
+    });
+    let report = invoke("trim_source_codes", trim_args.clone()).unwrap();
+    assert_eq!(report["truncated"], true);
+    assert_eq!(report["lineCount"], 5);
+    let id = &report["exportId"];
+    let export = |selection: Value| {
+        invoke(
+            "export_trim_result",
+            json!({ "id": id, "path": &target, "selection": selection }),
+        )
+    };
+    // 源码变化之后，各种范围仍从已生成的快照取字节。
+    fs::write(&source, "").unwrap();
+    export(json!({ "mode": "range", "start": 2, "end": 4 })).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), middle.as_bytes());
+    export(json!({ "mode": "headTail", "head": 1, "tail": 1 })).unwrap();
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        format!("{first}{last}").as_bytes()
+    );
+    for selection in [
+        json!({ "mode": "headTail", "head": 3, "tail": 3 }),
+        json!({ "mode": "all" }),
+    ] {
+        export(selection).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), whole.as_bytes());
+    }
+
+    for selection in [
+        json!({ "mode": "range", "start": 0, "end": 2 }),
+        json!({ "mode": "range", "start": 1, "end": 6 }),
+        json!({ "mode": "range", "start": 3, "end": 2 }),
+        json!({ "mode": "headTail", "head": -1, "tail": 1 }),
+        json!({ "mode": "unknown" }),
+    ] {
+        assert!(export(selection).is_err());
+        assert_eq!(fs::read(&target).unwrap(), whole.as_bytes());
+    }
+    assert!(invoke(
+        "export_trim_result",
+        json!({
+            "id": id, "path": null, "selection": { "mode": "all" }
+        })
+    )
+    .is_err());
+    assert_eq!(fs::read(&target).unwrap(), whole.as_bytes());
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    export(json!({ "mode": "range", "start": 5, "end": 5 })).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), last.as_bytes());
+    invoke("release_trim_result", json!({ "id": id })).unwrap();
+
+    let empty = invoke("trim_source_codes", trim_args).unwrap();
+    assert_eq!(empty["lineCount"], 0);
+    assert!(invoke("export_trim_result", json!({
+        "id": empty["exportId"], "path": &target, "selection": { "mode": "headTail", "head": 1, "tail": 1 }
+    })).is_err());
+    assert_eq!(fs::read(&target).unwrap(), last.as_bytes());
+    invoke(
+        "export_trim_result",
+        json!({
+            "id": empty["exportId"], "path": &target, "selection": { "mode": "all" }
+        }),
+    )
+    .unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"");
+    invoke("release_trim_result", json!({ "id": empty["exportId"] })).unwrap();
 }

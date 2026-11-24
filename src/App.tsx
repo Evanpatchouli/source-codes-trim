@@ -6,6 +6,7 @@ import TitleBar from "#components/TitleBar";
 import FileTree from "#components/FileTree";
 import FileSnapshot from "#components/FileSnapshot";
 import FileIssues from "#components/FileIssues";
+import LineExport from "#components/LineExport";
 import PlanChanges from "#components/PlanChanges";
 import { Resizable } from "re-resizable";
 import invoke, { errorMessage } from "#utils/invoke";
@@ -35,6 +36,7 @@ function App() {
   } = useSourceWorkspace();
   const truncated = trimReport?.truncated ?? false;
   const [selection, setSelection] = useState<{ id: string; index: number } | null>(null);
+  const [lineExportId, setLineExportId] = useState<string | null>(null);
   const selectedRange = selection && selection.id === trimReport?.exportId ? trimReport.fileRanges[selection.index] : null;
 
   const disable_trim_source_codes = files.length === 0 || treeLoading || planBusy === "open";
@@ -297,9 +299,14 @@ function App() {
                       <CopyIcon fontSize="sm" ml="0.2rem" />
                     </Button>
                     {trimReport?.exportId && (
-                      <Button size="sm" colorScheme="blue" onClick={exportResult} isDisabled={exporting}>
-                        {exporting ? "正在导出…" : "导出 TXT"}
-                      </Button>
+                      <>
+                        <Button size="sm" colorScheme="blue" onClick={() => void exportResult()} isDisabled={exporting}>
+                          {exporting ? "正在导出…" : "导出 TXT"}
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setLineExportId(trimReport.exportId)} isDisabled={exporting}>
+                          按行导出
+                        </Button>
+                      </>
                     )}
                   </>
                 )}
@@ -333,6 +340,15 @@ function App() {
           </Box>
         </Box>
       </main>
+      {lineExportId && lineExportId === trimReport?.exportId && (
+        <LineExport
+          key={lineExportId}
+          total={trimReport.lineCount}
+          exporting={exporting}
+          onExport={(lines) => exportResult(lines, lineExportId)}
+          onClose={() => setLineExportId(null)}
+        />
+      )}
       {selection && selectedRange && (
         <FileSnapshot
           key={`${selection.id}-${selection.index}`}

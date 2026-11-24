@@ -1,4 +1,5 @@
 import { invoke as raw_invoke } from "@tauri-apps/api/core";
+import type { LineSelection } from "./lineSelection.ts";
 
 type InvokeMap = {
   read_source_plan: {
@@ -31,7 +32,7 @@ type InvokeMap = {
     returns: TrimSourceCodesResult;
   };
   export_trim_result: {
-    args: { id: string; path: string };
+    args: { id: string; path: string; selection?: LineSelection };
     returns: void;
   };
   read_trim_file: {

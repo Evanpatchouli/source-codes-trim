@@ -80,7 +80,7 @@ test("取消保存保持当前结果，写入失败可以重试，重复点击�
   assert.match(workspace.getSnapshot().exportFeedback.message, /空间不足/);
   io.write = () => {};
   await workspace.exportResult();
-  assert.deepEqual(io.writes, Array(2).fill({ id: "current", path: "full.txt" }));
+  assert.deepEqual(io.writes, Array(2).fill({ id: "current", path: "full.txt", selection: { mode: "all" } }));
   assert.equal(workspace.getSnapshot().exportFeedback.ok, true);
   assert.equal(workspace.getSnapshot().trimReport.exportId, "current");
 });
@@ -106,11 +106,44 @@ test("短文本与零字节文件可导出，取消和失败保留当前句柄�
     assert.match(workspace.getSnapshot().exportFeedback.message, /无法写入/);
     io.write = () => {};
     await workspace.exportResult();
-    assert.deepEqual(io.writes.at(-1), { id, path: io.path });
+    assert.deepEqual(io.writes.at(-1), { id, path: io.path, selection: { mode: "all" } });
     assert.equal(workspace.getSnapshot().exportFeedback.ok, true);
   }
   workspace.clearOutput();
   assert.deepEqual(io.released, ["short", "empty"]);
+});
+
+test("每种范围都绑定打开时的结果，取消、写入失败和重试保留所选行", async (t) => {
+  const { workspace, io, trim } = await setup(t);
+  await trim("current");
+  for (const selection of [
+    { mode: "all" }, { mode: "range", start: 3, end: 7 }, { mode: "headTail", head: 0, tail: 2 },
+  ]) {
+    const writes = io.writes.length;
+    io.path = null;
+    assert.equal(await workspace.exportResult(selection, "current"), undefined);
+    assert.equal(io.writes.length, writes);
+    io.path = selection.mode + ".txt";
+    io.write = () => { throw new Error("不能覆盖"); };
+    const failure = await workspace.exportResult(selection, "current");
+    assert.equal(failure.ok, false);
+    assert.match(failure.message, /不能覆盖/);
+    io.write = () => {};
+    assert.equal((await workspace.exportResult(selection, "current")).ok, true);
+    assert.deepEqual(io.writes.slice(-2), Array(2).fill({ id: "current", path: io.path, selection }));
+  }
+  const dialogs = io.dialogs;
+  await trim("new");
+  await workspace.exportResult({ mode: "range", start: 1, end: 1 }, "current");
+  assert.equal(io.dialogs, dialogs);
+  const delayed = Promise.withResolvers();
+  io.path = delayed.promise;
+  const pending = workspace.exportResult({ mode: "headTail", head: 1, tail: 1 }, "new");
+  const writes = io.writes.length;
+  workspace.clearOutput();
+  delayed.resolve("过期.txt");
+  assert.equal(await pending, undefined);
+  assert.equal(io.writes.length, writes);
 });
 
 test("过期对话框不会开始写入，已经开始的写入结束后释放且不回填旧反馈", async (t) => {

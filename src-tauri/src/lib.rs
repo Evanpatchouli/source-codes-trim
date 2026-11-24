@@ -1,6 +1,7 @@
 mod file_issue;
 mod filter;
 mod handlers;
+mod line_export;
 mod plan_file;
 mod result_store;
 mod scanner;

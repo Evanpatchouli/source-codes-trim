@@ -1,3 +1,4 @@
+use crate::line_export::{write_selected, LineSelection};
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -142,7 +143,17 @@ impl ResultStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn export(&self, id: &str, destination: &Path) -> Result<(), String> {
+        self.export_selected(id, destination, &LineSelection::All)
+    }
+
+    pub(crate) fn export_selected(
+        &self,
+        id: &str,
+        destination: &Path,
+        selection: &LineSelection,
+    ) -> Result<(), String> {
         // 导出持有自己的引用，界面释放或替换结果时仍能完成写入。
         let snapshot = self.snapshot(id)?;
         let parent = destination.parent().ok_or("请选择导出文件")?;
@@ -155,8 +166,15 @@ impl ResultStore {
             .map_err(|error| format!("无法在导出目录创建临时文件：{error}"))?;
         snapshot
             .content
-            .with_reader(|reader| io::copy(reader, staging.as_file_mut()))
-            .map_err(|error| format!("复制整理结果失败：{error}"))?;
+            .with_reader(|reader| {
+                write_selected(
+                    reader,
+                    staging.as_file_mut(),
+                    selection,
+                    snapshot.index.line_count,
+                )
+            })
+            .map_err(|error| format!("导出整理结果失败：{error}"))?;
         staging
             .as_file()
             .sync_all()
