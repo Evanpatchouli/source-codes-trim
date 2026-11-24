@@ -29,6 +29,12 @@
 
 行数按完整结果统计。结果超过 256 KiB 时，界面只显示能容纳的完整 UTF-8 字符，“复制预览”复制可见部分，“导出完整内容”可保存全部源码。在清除结果、重新整理或关闭应用之前，可以重复导出。
 
+## 本地验证
+
+- 安装前端依赖用 `npm ci`。使用 Node.js 22.18 或更高版本运行 `npm test`，可直接测试 TypeScript 模块。
+- `npm run typecheck` 检查应用与 Vite 配置。`npm run build` 会先运行类型检查，再生成前端产物。
+- Windows 使用 MSVC 工具链执行 `cargo +stable-x86_64-pc-windows-msvc test --locked --manifest-path src-tauri/Cargo.toml`，覆盖核心逻辑与 Tauri IPC。其他桌面平台可使用对应的原生 Rust 工具链。
+
 ## 开源协议
 
 MIT

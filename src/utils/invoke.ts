@@ -1,12 +1,5 @@
 import { invoke as raw_invoke } from "@tauri-apps/api/core";
 
-type Resp<T = unknown> = {
-  ok: boolean,
-  code: number,
-  msg: string,
-  data: T,
-}
-
 type InvokeMap = {
   get_files: {
     args: {

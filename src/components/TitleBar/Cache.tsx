@@ -1,8 +1,8 @@
-import localStoragePlus from "#/utils/localStoragePlus";
+import readStorageSnapshot from "#/utils/readStorageSnapshot";
 import { Heading } from "@chakra-ui/react";
 
 export default function Cache() {
-  const storage = localStoragePlus.toObject();
+  const storage = readStorageSnapshot(localStorage);
   return (
     <>
       <Heading fontSize="xl" textAlign="center" mb="1rem" aria-label="数据缓存">
