@@ -7,7 +7,7 @@ import FileTree, { TreeRef } from "#components/FileTree";
 import FileIssues from "#components/FileIssues";
 import flatternFileTree from "#utils/flatternFileTree";
 import { Resizable } from "re-resizable";
-import invoke from "#utils/invoke";
+import invoke, { errorMessage } from "#utils/invoke";
 import Loading from "./components/Loading";
 import sleep from "./utils/sleep";
 import Tip from "./components/Tip";
@@ -48,9 +48,11 @@ function App() {
   const [exclude_empty_dirs, setExcludeEmptyDirs] = useState<boolean>(true);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [scanIssues, setScanIssues] = useState<FileIssue[]>([]);
+  const [scanError, setScanError] = useState("");
   const [treeLoading, setTreeLoading] = useState<boolean>(false);
   const [content, setContent] = useState<string>("");
   const [contentState, setContentState] = useState<"loading" | "loaded" | "error">("loaded");
+  const [trimReport, setTrimReport] = useState<Pick<TrimSourceCodesResult, "processed" | "skipped"> | null>(null);
   const lineNumber = (content ? content.split("\n") : []).length;
 
   const disable_trim_source_codes = files.length === 0;
@@ -61,7 +63,7 @@ function App() {
     root &&
     invoke("open_directory_in_fs", {
       path: root,
-    });
+    }).catch((error) => toast.error(`打开目录失败：${errorMessage(error)}`));
 
   const [treeWidth, setTreeWidth] = useState(240);
 
@@ -82,6 +84,62 @@ function App() {
 
   const handleClear = () => {
     setContent("");
+    setContentState("loaded");
+    setTrimReport(null);
+  };
+
+  const scanFiles = async () => {
+    setTreeLoading(true);
+    setScanIssues([]);
+    setScanError("");
+    const started = performance.now();
+    try {
+      const scan = await invoke("get_files", { path: root, includes, excludes, excludeEmptyDirs: exclude_empty_dirs });
+      const elapsed = performance.now() - started;
+      if (elapsed < minLoadingTime) await sleep(minLoadingTime - elapsed);
+      setFiles(scan.files);
+      setScanIssues(scan.skipped);
+    } catch (error) {
+      setFiles([]);
+      setScanError(`扫描失败：${errorMessage(error)}`);
+    } finally {
+      setTreeLoading(false);
+    }
+  };
+
+  const trimFiles = async () => {
+    setContentState("loading");
+    setTrimReport(null);
+    const started = performance.now();
+    try {
+      const ignoredPaths = treeRef.current?.getIgnoredPaths() || [];
+      const pathList = flatternFileTree(files)
+        .filter((i) => !i.is_dir)
+        .map((i) => i.path)
+        .filter((i) => !ignoredPaths.some((j) => i.startsWith(j)));
+      const { result, processed, skipped } = await invoke("trim_source_codes", {
+        files: pathList,
+        trimWhitespace: true,
+        trimNewlines: true,
+        trimComments: true,
+      });
+      const elapsed = performance.now() - started;
+      if (elapsed < minLoadingTime) await sleep(minLoadingTime - elapsed);
+      setTrimReport({ processed, skipped });
+      if (processed === 0 && skipped.length > 0) {
+        setContent("整理失败，所选文件均被跳过");
+        setContentState("error");
+      } else if (result.length > getMaxContentLength()) {
+        setContent("内容过长，无法显示");
+        setContentState("error");
+      } else {
+        setContent(result);
+        setContentState("loaded");
+      }
+    } catch (error) {
+      setContent(`整理失败：${errorMessage(error)}`);
+      setContentState("error");
+    }
   };
 
   const preRef = useRef<HTMLPreElement>(null);
@@ -179,7 +237,8 @@ function App() {
                       setRoot(path);
                       setFiles([]);
                       setScanIssues([]);
-                      setContent("");
+                      setScanError("");
+                      handleClear();
                     }
                   }}
                   size="sm"
@@ -274,27 +333,7 @@ function App() {
                     />
                   )}
                   <Button
-                    onClick={async () => {
-                      setTreeLoading(true);
-                      setScanIssues([]);
-                      const timestart = performance.now();
-                      const scan = await invoke("get_files", {
-                        path: root,
-                        includes,
-                        excludes,
-                        excludeEmptyDirs: exclude_empty_dirs,
-                      });
-                      const timeend = performance.now();
-                      const timedelta = timeend - timestart;
-                      if (timedelta < minLoadingTime) {
-                        await sleep(minLoadingTime - timedelta);
-                      }
-                      setTreeLoading(false);
-                      queueMicrotask(() => {
-                        setFiles(typeof scan === "string" ? [] : scan.files);
-                        setScanIssues(typeof scan === "string" ? [] : scan.skipped);
-                      });
-                    }}
+                    onClick={scanFiles}
                     disabled={!root}
                     className="nowrap"
                     size="sm"
@@ -305,43 +344,22 @@ function App() {
                     id="trim-source-codes"
                     size="sm"
                     disabled={disable_trim_source_codes}
-                    onClick={async () => {
-                      setContentState("loading");
-                      const timestart = performance.now();
-                      const ignoredPaths = treeRef.current?.getIgnoredPaths() || [];
-                      const pathList = flatternFileTree(files)
-                        .filter((i) => !i.is_dir)
-                        .map((i) => i.path)
-                        .filter((i) => !ignoredPaths.some((j) => i.startsWith(j)));
-                      const resp = await invoke("trim_source_codes", {
-                        files: pathList,
-                        trimWhitespace: true,
-                        trimNewlines: true,
-                        trimComments: true,
-                      });
-                      const timeend = performance.now();
-                      const timedelta = timeend - timestart;
-                      if (timedelta < minLoadingTime) {
-                        await sleep(minLoadingTime - timedelta);
-                      }
-                      const MAX = getMaxContentLength();
-                      if (resp.result.length > MAX) {
-                        setContent("内容过长，无法显示");
-                        setContentState("error");
-                      } else {
-                        queueMicrotask(() => {
-                          setContent(resp.result || "");
-                          setContentState("loaded");
-                        });
-                      }
-                    }}
+                    onClick={trimFiles}
                   >
                     整理源码
                   </Button>
                 </Flex>
               </Flex>
             </Box>
+            {scanError && <Text role="alert" color="red.600" fontSize="sm">{scanError}</Text>}
             <FileIssues label="扫描" issues={scanIssues} />
+            {trimReport && (
+              <Text role="status" fontSize="sm">
+                已处理 {trimReport.processed} 个文件
+                {contentState === "loaded" && !content && (trimReport.processed ? "，整理结果为空" : "，未选择待整理文件")}
+              </Text>
+            )}
+            {trimReport && <FileIssues label="整理" issues={trimReport.skipped} />}
             {/** @Evanpatchouli 下面的 2rem 是因为 main-viewbox 的 padding 为 1rem */}
             <Box
               className="content-container"
@@ -380,7 +398,7 @@ function App() {
                 <Loading on />
                 <span>整理中...</span>
               </Flex>
-              <pre id="content-box" data-state={contentState} ref={preRef}>
+              <pre id="content-box" data-state={contentState} role={contentState === "error" ? "alert" : undefined} ref={preRef}>
                 <code>{content}</code>
               </pre>
             </Box>

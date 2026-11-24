@@ -7,7 +7,8 @@ declare type FileItem = {
 
 declare interface TrimSourceCodesResult {
   result: string;
-  skipped: string[];
+  processed: number;
+  skipped: FileIssue[];
 }
 
 declare interface FileIssue {

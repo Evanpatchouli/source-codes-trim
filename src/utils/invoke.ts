@@ -1,5 +1,4 @@
 import { invoke as raw_invoke } from "@tauri-apps/api/core";
-import { toast } from "react-hot-toast";
 
 type Resp<T = unknown> = {
   ok: boolean,
@@ -32,20 +31,19 @@ type InvokeMap = {
   };
   open_directory_in_fs: {
     args: { path: string };
-    returns: void;
+    returns: boolean;
   };
 };
 
-export default function invoke<T extends InvokeMap[K]["returns"], K extends keyof InvokeMap>(
+export default function invoke<K extends keyof InvokeMap>(
   cmd: K,
-  args?: InvokeMap[K]["args"]
+  args: InvokeMap[K]["args"]
 ): Promise<InvokeMap[K]["returns"]> {
-  return raw_invoke<T>(cmd, args).catch(error => {
-    console.error(`Invoke ${cmd} error:`, error);
-    const errMsg = error.message || error.name || typeof error === "string" ? error : "未知错误";
-    toast.error(errMsg, {
-      position: "bottom-right"
-    })
-    return new Promise(resolve => resolve(errMsg));
-  });
+  return raw_invoke<InvokeMap[K]["returns"]>(cmd, args);
+}
+
+export function errorMessage(error: unknown): string {
+  if (typeof error === "string" && error) return error;
+  if (error instanceof Error && error.message) return error.message;
+  return "未知错误";
 }
