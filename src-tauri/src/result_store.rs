@@ -1,7 +1,9 @@
+use serde::Serialize;
 use std::{
     collections::HashMap,
     fs::File,
-    io::{self, Cursor, Read, Seek},
+    io::{self, Cursor, Read, Seek, SeekFrom},
+    ops::Range,
     path::Path,
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -10,12 +12,12 @@ use tempfile::NamedTempFile;
 trait ReadSeek: Read + Seek {}
 impl<T: Read + Seek> ReadSeek for T {}
 
-enum Snapshot {
+enum Content {
     Memory(Box<[u8]>),
     Disk(Mutex<File>),
 }
 
-impl Snapshot {
+impl Content {
     fn with_reader<T>(
         &self,
         read: impl FnOnce(&mut dyn ReadSeek) -> io::Result<T>,
@@ -34,6 +36,24 @@ impl Snapshot {
 }
 
 #[derive(Default)]
+pub(crate) struct SnapshotIndex {
+    pub files: Vec<Range<u64>>,
+    pub line_count: u64,
+}
+
+struct Snapshot {
+    content: Content,
+    index: SnapshotIndex,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FilePreview {
+    pub text: String,
+    pub next_offset: Option<u64>,
+}
+
+#[derive(Default)]
 struct Results {
     next_id: u64,
     snapshots: HashMap<String, Arc<Snapshot>>,
@@ -49,20 +69,71 @@ impl ResultStore {
         self.results.lock().map_err(|_| "整理结果状态不可用".into())
     }
 
-    fn insert(&self, snapshot: Snapshot) -> Result<String, String> {
+    fn insert(&self, content: Content, index: SnapshotIndex) -> Result<String, String> {
         let mut results = self.lock()?;
         results.next_id = results.next_id.checked_add(1).ok_or("整理结果编号已用尽")?;
         let id = results.next_id.to_string();
-        results.snapshots.insert(id.clone(), Arc::new(snapshot));
+        results
+            .snapshots
+            .insert(id.clone(), Arc::new(Snapshot { content, index }));
         Ok(id)
     }
 
-    pub(crate) fn insert_file(&self, file: File) -> Result<String, String> {
-        self.insert(Snapshot::Disk(Mutex::new(file)))
+    pub(crate) fn insert_file(&self, file: File, index: SnapshotIndex) -> Result<String, String> {
+        self.insert(Content::Disk(Mutex::new(file)), index)
     }
 
-    pub(crate) fn insert_text(&self, text: &str) -> Result<String, String> {
-        self.insert(Snapshot::Memory(text.as_bytes().into()))
+    pub(crate) fn insert_text(&self, text: &str, index: SnapshotIndex) -> Result<String, String> {
+        self.insert(Content::Memory(text.as_bytes().into()), index)
+    }
+
+    fn snapshot(&self, id: &str) -> Result<Arc<Snapshot>, String> {
+        self.lock()?
+            .snapshots
+            .get(id)
+            .cloned()
+            .ok_or_else(|| "整理结果已释放".into())
+    }
+
+    pub(crate) fn file_preview(
+        &self,
+        id: &str,
+        index: usize,
+        offset: u64,
+    ) -> Result<FilePreview, String> {
+        const PAGE_BYTES: u64 = 64 * 1024;
+        let snapshot = self.snapshot(id)?;
+        let span = snapshot
+            .index
+            .files
+            .get(index)
+            .ok_or("文件索引超出结果范围")?;
+        let length = span.end - span.start;
+        let remaining = length.checked_sub(offset).ok_or("文件预览偏移超出范围")?;
+        let mut bytes = vec![0; remaining.min(PAGE_BYTES) as usize];
+        snapshot
+            .content
+            .with_reader(|reader| {
+                reader.seek(SeekFrom::Start(span.start + offset))?;
+                reader.read_exact(&mut bytes)
+            })
+            .map_err(|e| format!("读取文件预览失败：{e}"))?;
+
+        let text = match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(error) if remaining > PAGE_BYTES && error.utf8_error().error_len().is_none() => {
+                let valid = error.utf8_error().valid_up_to();
+                let mut bytes = error.into_bytes();
+                bytes.truncate(valid);
+                String::from_utf8(bytes).expect("validated UTF-8 prefix")
+            }
+            Err(_) => return Err("文件预览的起始偏移不在 UTF-8 字符边界".into()),
+        };
+        let end = offset + text.len() as u64;
+        Ok(FilePreview {
+            text,
+            next_offset: (end < length).then_some(end),
+        })
     }
 
     pub(crate) fn release(&self, id: &str) -> Result<(), String> {
@@ -73,12 +144,7 @@ impl ResultStore {
 
     pub(crate) fn export(&self, id: &str, destination: &Path) -> Result<(), String> {
         // 导出持有自己的引用，界面释放或替换结果时仍能完成写入。
-        let snapshot = self
-            .lock()?
-            .snapshots
-            .get(id)
-            .cloned()
-            .ok_or("整理结果已释放")?;
+        let snapshot = self.snapshot(id)?;
         let parent = destination.parent().ok_or("请选择导出文件")?;
         let parent = if parent.as_os_str().is_empty() {
             Path::new(".")
@@ -88,6 +154,7 @@ impl ResultStore {
         let mut staging = NamedTempFile::new_in(parent)
             .map_err(|error| format!("无法在导出目录创建临时文件：{error}"))?;
         snapshot
+            .content
             .with_reader(|reader| io::copy(reader, staging.as_file_mut()))
             .map_err(|error| format!("复制整理结果失败：{error}"))?;
         staging
@@ -109,7 +176,7 @@ mod tests {
     fn snapshot(store: &ResultStore, content: &[u8]) -> String {
         let mut file = tempfile::tempfile().unwrap();
         file.write_all(content).unwrap();
-        store.insert_file(file).unwrap()
+        store.insert_file(file, SnapshotIndex::default()).unwrap()
     }
 
     #[test]
@@ -151,7 +218,9 @@ mod tests {
     fn invalid_destination_preserves_the_target_and_allows_retry() {
         let dir = tempfile::tempdir().unwrap();
         let store = ResultStore::default();
-        let id = store.insert_text("full result").unwrap();
+        let id = store
+            .insert_text("full result", SnapshotIndex::default())
+            .unwrap();
         let target = dir.path().join("directory");
         fs::create_dir(&target).unwrap();
         let existing = target.join("existing.txt");
@@ -167,13 +236,14 @@ mod tests {
     fn memory_snapshots_own_their_bytes_and_readers_start_at_zero() {
         let store = ResultStore::default();
         let mut text = String::from("内容\r\n😀");
-        let id = store.insert_text(&text).unwrap();
+        let id = store.insert_text(&text, SnapshotIndex::default()).unwrap();
         text.clear();
         let snapshot = store.lock().unwrap().snapshots[&id].clone();
-        assert!(matches!(*snapshot, Snapshot::Memory(_)));
+        assert!(matches!(snapshot.content, Content::Memory(_)));
         store.release(&id).unwrap();
         for _ in 0..2 {
             let value = snapshot
+                .content
                 .with_reader(|reader| {
                     assert_eq!(reader.stream_position()?, 0);
                     let mut value = String::new();
@@ -192,7 +262,9 @@ mod tests {
         let mut write_only = File::create(source).unwrap();
         write_only.write_all(b"unreadable").unwrap();
         let store = ResultStore::default();
-        let id = store.insert_file(write_only).unwrap();
+        let id = store
+            .insert_file(write_only, SnapshotIndex::default())
+            .unwrap();
         let destination = dir.path().join("existing.txt");
         fs::write(&destination, "previous").unwrap();
         assert!(store.export(&id, &destination).is_err());

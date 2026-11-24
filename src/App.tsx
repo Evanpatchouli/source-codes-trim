@@ -4,6 +4,7 @@ import { Box, Button, Flex, FormLabel, Input, Switch, Text, Textarea, Tooltip } 
 import { CopyIcon } from "@chakra-ui/icons";
 import TitleBar from "#components/TitleBar";
 import FileTree from "#components/FileTree";
+import FileSnapshot from "#components/FileSnapshot";
 import FileIssues from "#components/FileIssues";
 import PlanChanges from "#components/PlanChanges";
 import { Resizable } from "re-resizable";
@@ -33,6 +34,8 @@ function App() {
     openPlan, savePlan, hasScan, planChanges, planBusy, planFeedback,
   } = useSourceWorkspace();
   const truncated = trimReport?.truncated ?? false;
+  const [selection, setSelection] = useState<{ id: string; index: number } | null>(null);
+  const selectedRange = selection && selection.id === trimReport?.exportId ? trimReport.fileRanges[selection.index] : null;
 
   const disable_trim_source_codes = files.length === 0 || treeLoading || planBusy === "open";
 
@@ -116,6 +119,10 @@ function App() {
               ignoredPaths={ignoredPaths}
               onToggleIgnored={toggleIgnored}
               onMove={moveFile}
+              report={trimReport}
+              onViewFile={(index) => {
+                if (trimReport?.exportId) setSelection({ id: trimReport.exportId, index });
+              }}
               loading={treeLoading}
             />
           </Resizable>
@@ -326,6 +333,15 @@ function App() {
           </Box>
         </Box>
       </main>
+      {selection && selectedRange && (
+        <FileSnapshot
+          key={`${selection.id}-${selection.index}`}
+          id={selection.id}
+          index={selection.index}
+          range={selectedRange}
+          onClose={() => setSelection(null)}
+        />
+      )}
     </div>
   );
 }

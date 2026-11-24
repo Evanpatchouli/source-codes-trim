@@ -1,6 +1,6 @@
 use crate::filter::FileFilter;
 use crate::plan_file;
-use crate::result_store::ResultStore;
+use crate::result_store::{FilePreview, ResultStore};
 use crate::scanner::{scan, ScanResult};
 use crate::source_text::TrimOptions;
 use crate::trim::{trim_files, TrimResult};
@@ -53,6 +53,17 @@ pub async fn trim_source_codes(
     };
     let store = store.inner().clone();
     run_blocking(move || trim_files(&files, &options, &store)).await
+}
+
+#[tauri::command]
+pub async fn read_trim_file(
+    store: tauri::State<'_, ResultStore>,
+    id: String,
+    index: usize,
+    offset: u64,
+) -> Result<FilePreview, String> {
+    let store = store.inner().clone();
+    run_blocking(move || store.file_preview(&id, index, offset)).await
 }
 
 #[tauri::command]

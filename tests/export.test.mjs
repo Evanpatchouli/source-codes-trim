@@ -3,7 +3,10 @@ import { test } from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { createSourceWorkspace } from "../src/hooks/useSourceWorkspace.ts";
 
-const largeResult = (id) => ({ result: "预览", processed: 1, skipped: [], byteCount: 500000, lineCount: 3000, truncated: true, exportId: id });
+const largeResult = (id) => ({
+  result: "预览", processed: 1, skipped: [], byteCount: 500000, lineCount: 3000, truncated: true, exportId: id,
+  fileRanges: [{ path: "A/source.ts", startLine: 1, endLine: 3000, byteCount: 500000 }],
+});
 
 async function setup(t) {
   globalThis.window = {};
@@ -88,6 +91,7 @@ test("短文本与零字节文件可导出，取消和失败保留当前句柄�
     io.result = {
       result, processed: 1, skipped: [], byteCount: Buffer.byteLength(result),
       lineCount: result ? 1 : 0, truncated: false, exportId: id,
+      fileRanges: [{ path: "A/source.ts", startLine: result ? 1 : null, endLine: result ? 1 : null, byteCount: Buffer.byteLength(result) }],
     };
     await workspace.trimFiles();
     assert.equal(workspace.getSnapshot().trimReport.truncated, false);

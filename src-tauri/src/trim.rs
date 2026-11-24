@@ -1,5 +1,5 @@
 use crate::file_issue::FileIssue;
-use crate::result_store::ResultStore;
+use crate::result_store::{ResultStore, SnapshotIndex};
 use crate::source_text::{write_source, TrimOptions};
 use serde::Serialize;
 use std::{
@@ -12,6 +12,17 @@ const PREVIEW_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct FileRange {
+    pub path: String,
+    pub start_line: Option<u64>,
+    pub end_line: Option<u64>,
+    pub byte_count: u64,
+    #[serde(skip)]
+    byte_start: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TrimResult {
     pub result: String,
     pub processed: usize,
@@ -20,6 +31,7 @@ pub(crate) struct TrimResult {
     pub line_count: u64,
     pub truncated: bool,
     pub export_id: Option<String>,
+    pub file_ranges: Vec<FileRange>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -30,6 +42,10 @@ struct Counts {
 }
 
 impl Counts {
+    fn lines(&self) -> u64 {
+        self.newlines + u64::from(self.has_unterminated_line())
+    }
+
     fn has_unterminated_line(&self) -> bool {
         self.last_byte.is_some() && !matches!(self.last_byte, Some(b'\r' | b'\n'))
     }
@@ -94,18 +110,27 @@ impl Output {
 
     fn finish(
         self,
-        processed: usize,
+        file_ranges: Vec<FileRange>,
         skipped: Vec<FileIssue>,
         store: &ResultStore,
     ) -> Result<TrimResult, String> {
         let truncated = self.full.is_some();
+        let processed = file_ranges.len();
+        let index = SnapshotIndex {
+            files: file_ranges
+                .iter()
+                .map(|r| r.byte_start..r.byte_start + r.byte_count)
+                .collect(),
+            line_count: self.counts.lines(),
+        };
+        let line_count = index.line_count;
         let export_id = if let Some(writer) = self.full {
             let file = writer
                 .into_inner()
                 .map_err(|e| format!("写入完整结果失败：{e}"))?;
-            Some(store.insert_file(file)?)
+            Some(store.insert_file(file, index)?)
         } else if processed != 0 || skipped.is_empty() {
-            Some(store.insert_text(&self.preview)?)
+            Some(store.insert_text(&self.preview, index)?)
         } else {
             None
         };
@@ -114,9 +139,10 @@ impl Output {
             processed,
             skipped,
             byte_count: self.counts.bytes,
-            line_count: self.counts.newlines + u64::from(self.counts.has_unterminated_line()),
+            line_count,
             truncated,
             export_id,
+            file_ranges,
         })
     }
 }
@@ -179,15 +205,17 @@ pub(crate) fn trim_files(
 ) -> Result<TrimResult, String> {
     let mut output = Output::default();
     let mut skipped = Vec::new();
-    let mut processed = 0;
+    let mut file_ranges = Vec::new();
     let mut source = String::new();
     let mut buffer = vec![0; 64 * 1024];
     for path in files {
         let previous = output.counts;
+        let mut byte_start = previous.bytes;
         let mut needs_separator = previous.has_unterminated_line();
         let mut emit = |part: &str| {
             if !part.is_empty() && needs_separator {
                 output.push("\n")?;
+                byte_start = output.counts.bytes;
                 needs_separator = false;
             }
             output.push(part)
@@ -203,7 +231,17 @@ pub(crate) fn trim_files(
             }
         });
         match result {
-            Ok(()) => processed += 1,
+            Ok(()) => {
+                let before = previous.lines();
+                let after = output.counts.lines();
+                file_ranges.push(FileRange {
+                    path: path.display().to_string(),
+                    start_line: (after > before).then(|| before + 1),
+                    end_line: (after > before).then_some(after),
+                    byte_count: output.counts.bytes - byte_start,
+                    byte_start,
+                });
+            }
             Err(FileError::Input(reason)) => {
                 output
                     .rollback(previous)
@@ -215,7 +253,7 @@ pub(crate) fn trim_files(
             }
         }
     }
-    output.finish(processed, skipped, store)
+    output.finish(file_ranges, skipped, store)
 }
 
 #[cfg(test)]
@@ -321,6 +359,88 @@ mod tests {
     }
 
     #[test]
+    fn file_ranges_preserve_cross_file_crlf_separators_and_successful_empty_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let inputs = [
+            ("first.txt", "x\r"),
+            ("continuation.txt", "\n"),
+            ("comment.ts", "// comment\n"),
+            ("next.txt", "牛"),
+            ("last.txt", "b\nc"),
+        ];
+        let files = inputs
+            .iter()
+            .map(|(name, content)| {
+                let path = dir.path().join(name);
+                fs::write(&path, content).unwrap();
+                path
+            })
+            .collect::<Vec<_>>();
+        let store = ResultStore::default();
+        let report = trim_files(&files, &options(), &store).unwrap();
+        assert_eq!(report.result, "x\r\n牛\nb\nc");
+        let ranges: Vec<_> = report
+            .file_ranges
+            .iter()
+            .map(|r| (r.start_line, r.end_line, r.byte_count))
+            .collect();
+        assert_eq!(
+            ranges,
+            [
+                (Some(1), Some(1), 2),
+                (None, None, 1),
+                (None, None, 0),
+                (Some(2), Some(2), 3),
+                (Some(3), Some(4), 3)
+            ]
+        );
+        let id = report.export_id.unwrap();
+        for (i, text) in ["x\r", "\n", "", "牛", "b\nc"].into_iter().enumerate() {
+            assert_eq!(report.file_ranges[i].path, files[i].to_str().unwrap());
+            let page = store.file_preview(&id, i, 0).unwrap();
+            assert_eq!(page.text, text);
+            assert_eq!(page.next_offset, None);
+        }
+    }
+
+    #[test]
+    fn a_huge_line_beyond_the_main_preview_can_be_paged_after_sources_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = dir.path().join("earlier.txt");
+        let late = dir.path().join("late.txt");
+        fs::write(&head, "x".repeat(PREVIEW_BYTES + 1)).unwrap();
+        let text = format!("{}{}尾", "x".repeat(65535), "😀".repeat(PREVIEW_BYTES / 4));
+        fs::write(&late, &text).unwrap();
+        let store = ResultStore::default();
+        let report = trim_files(&[head, late.clone()], &options(), &store).unwrap();
+        fs::write(&late, "changed").unwrap();
+        assert_eq!(report.file_ranges[1].start_line, Some(2));
+        assert_eq!(report.file_ranges[1].end_line, Some(2));
+        assert!(!report.result.contains("😀"));
+        let id = report.export_id.unwrap();
+        let first = store.file_preview(&id, 1, 0).unwrap();
+        assert_eq!(first.next_offset, Some(65535));
+        let mut assembled = first.text;
+        let mut next = first.next_offset;
+        while let Some(offset) = next {
+            let page = store.file_preview(&id, 1, offset).unwrap();
+            assert!(!page.text.is_empty() && page.text.len() <= 65536);
+            assembled.push_str(&page.text);
+            next = page.next_offset;
+        }
+        assert_eq!(assembled, text);
+        assert_eq!(
+            store.file_preview(&id, 1, text.len() as u64).unwrap().text,
+            ""
+        );
+        assert!(store.file_preview(&id, 1, 65536).is_err());
+        assert!(store.file_preview(&id, 1, u64::MAX).is_err());
+        assert!(store.file_preview(&id, 2, 0).is_err());
+        store.release(&id).unwrap();
+        assert!(store.file_preview(&id, 1, 0).is_err());
+    }
+
+    #[test]
     fn preview_is_a_contiguous_utf8_prefix_and_export_has_all_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("large.txt");
@@ -372,6 +492,17 @@ mod tests {
                 assert_eq!(report.skipped.len(), 1);
                 assert_eq!(report.line_count, 2);
                 assert_eq!(report.byte_count, expected.len() as u64);
+                assert_eq!(report.file_ranges.len(), 2);
+                assert_eq!(report.file_ranges[1].path, end.to_str().unwrap());
+                assert_eq!(report.file_ranges[1].start_line, Some(2));
+                assert_eq!(report.file_ranges[1].byte_count, 3);
+                assert_eq!(
+                    store
+                        .file_preview(report.export_id.as_ref().unwrap(), 1, 0)
+                        .unwrap()
+                        .text,
+                    "后"
+                );
                 if initial.len() <= PREVIEW_BYTES {
                     assert!(!report.truncated);
                     assert_eq!(report.result, expected);

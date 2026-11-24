@@ -32,7 +32,10 @@ function setup(t) {
       case "read_source_plan": return io.saved;
       case "write_source_plan": io.saved = args.content; return;
       case "get_files": return io.scan(args);
-      case "trim_source_codes": return { result: "ok", processed: 1, skipped: [], lineCount: 1, byteCount: 2, truncated: false, exportId: "short" };
+      case "trim_source_codes": return {
+        result: "ok", processed: 1, skipped: [], lineCount: 1, byteCount: 2, truncated: false, exportId: "short",
+        fileRanges: [{ path: args.files[0], startLine: 1, endLine: 1, byteCount: 2 }],
+      };
       case "release_trim_result": return;
       default: throw new Error(cmd);
     }

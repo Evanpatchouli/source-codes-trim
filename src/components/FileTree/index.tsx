@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { Flex, IconButton, Tooltip } from "@chakra-ui/react";
 import { DragHandleIcon, ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import classes from "#/utils/classes";
 import type { TreeDropPosition } from "#/utils/moveFileTreeItem";
+import { describeFileRange } from "#/utils/filePreview";
 import Loading from "../Loading";
 import "./index.css";
 
@@ -11,6 +12,8 @@ interface FileTreeProps {
   ignoredPaths: ReadonlySet<string>;
   onToggleIgnored: (path: string) => void;
   onMove: (sourcePath: string, targetPath: string, position: TreeDropPosition) => void;
+  report: Pick<TrimSourceCodesResult, "fileRanges" | "skipped"> | null;
+  onViewFile: (index: number) => void;
   loading?: boolean;
 }
 
@@ -23,8 +26,14 @@ function dropPosition(event: DragEvent<HTMLDivElement>, isDirectory: boolean): T
   return fraction < 0.5 ? "before" : "after";
 }
 
-export default function FileTree({ items, ignoredPaths, onToggleIgnored, onMove, loading }: FileTreeProps) {
+export default function FileTree({ items, ignoredPaths, onToggleIgnored, onMove, report, onViewFile, loading }: FileTreeProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const results = useMemo(() => {
+    const byPath = new Map<string, { index: number | null; label: string; reason?: string }>();
+    report?.fileRanges.forEach((range, index) => byPath.set(range.path, { index, label: describeFileRange(range) }));
+    report?.skipped.forEach(({ path, reason }) => byPath.set(path, { index: null, label: "已跳过", reason }));
+    return byPath;
+  }, [report]);
   const dragSource = useRef<{ path: string; subtree: HTMLElement; items: FileItem[] } | null>(null);
   const dropRow = useRef<HTMLElement | null>(null);
 
@@ -86,9 +95,15 @@ export default function FileTree({ items, ignoredPaths, onToggleIgnored, onMove,
     const isExpanded = !!expanded[item.path];
     const isIgnored = parentIgnored || ignoredPaths.has(item.path);
     const action = parentIgnored ? "已随上级目录排除" : isIgnored ? "恢复包含" : "排除";
+    const result = !item.is_dir && !isIgnored ? results.get(item.path) : undefined;
+    const indexInResult = result?.index;
+    const status = isIgnored && !item.is_dir ? "已排除" : result?.label;
     const name = (
       <>
-        <span aria-hidden="true">{item.is_dir ? (isExpanded ? "📂" : "📁") : "📄"}</span> {item.name}
+        <span className="tree-filename">
+          <span aria-hidden="true">{item.is_dir ? (isExpanded ? "📂" : "📁") : "📄"}</span> {item.name}
+        </span>
+        {status && <small className="tree-file-status">{status}</small>}
       </>
     );
     return (
@@ -126,8 +141,16 @@ export default function FileTree({ items, ignoredPaths, onToggleIgnored, onMove,
             >
               {name}
             </button>
+          ) : typeof indexInResult === "number" ? (
+            <button
+              type="button"
+              className="tree-name"
+              aria-label={`查看 ${item.name} 的整理结果，${status}`}
+              title={item.path}
+              onClick={() => onViewFile(indexInResult)}
+            >{name}</button>
           ) : (
-            <span className="tree-name">{name}</span>
+            <span className="tree-name" title={result?.reason ?? item.path}>{name}</span>
           )}
           <Tooltip label={action} placement="bottom" hasArrow>
             <span className="actions">

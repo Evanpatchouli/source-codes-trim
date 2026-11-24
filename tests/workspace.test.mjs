@@ -23,6 +23,7 @@ const scanResult = (path) => ({
 const trimResult = (result) => ({
   result, processed: 1, skipped: [], byteCount: Buffer.byteLength(result), lineCount: result ? 1 : 0,
   truncated: false, exportId: "result-" + result,
+  fileRanges: [{ path: "A/main.ts", startLine: result ? 1 : null, endLine: result ? 1 : null, byteCount: Buffer.byteLength(result) }],
 });
 
 test("将原先排除的目录设为新根后可整理其中的文件", async (t) => {

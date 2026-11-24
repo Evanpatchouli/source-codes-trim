@@ -65,7 +65,10 @@ test("实际移动释放旧预览，迟到的输出只释放自身，整理按�
     return job.promise;
   });
   const workspace = createSourceWorkspace();
-  const result = (id) => ({ result: id, processed: 3, skipped: [], byteCount: id.length, lineCount: 1, truncated: false, exportId: id });
+  const result = (id) => ({
+    result: id, processed: 1, skipped: [], byteCount: id.length, lineCount: 1, truncated: false, exportId: id,
+    fileRanges: [{ path: "first", startLine: 1, endLine: 1, byteCount: id.length }],
+  });
   workspace.setOption("path", "root");
   await workspace.scanFiles();
   workspace.toggleIgnored("other");

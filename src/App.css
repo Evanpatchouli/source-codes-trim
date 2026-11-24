@@ -109,6 +109,16 @@ html {
   border-bottom: 1px solid #e2e8f0;
 }
 
+.file-snapshot-text {
+  margin: 0;
+  padding: 0.6rem;
+  max-height: 50vh;
+  overflow: auto;
+  font-size: 0.875rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+}
+
 .file-issues,
 .plan-changes {
   font-size: 0.875rem;

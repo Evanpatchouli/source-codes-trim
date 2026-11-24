@@ -15,6 +15,7 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
             handlers::read_source_plan,
             handlers::write_source_plan,
             handlers::trim_source_codes,
+            handlers::read_trim_file,
             handlers::export_trim_result,
             handlers::release_trim_result,
             handlers::open_directory_in_fs

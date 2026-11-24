@@ -41,12 +41,18 @@ fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
     };
     let scan = invoke("get_files", options(dir.path())).unwrap();
     assert_eq!(scan["files"][0]["name"], "code.ts");
-    let trim_files =
-        |files: &[&Path]| {
-            invoke("trim_source_codes", json!({
+    let trim_files = |files: &[&Path]| {
+        let args = json!({
             "files": files, "trimWhitespace": true, "trimNewlines": true, "trimComments": true
-        })).unwrap()
-        };
+        });
+        invoke("trim_source_codes", args).unwrap()
+    };
+    let preview = |report: &Value, index: usize, offset: u64| {
+        invoke(
+            "read_trim_file",
+            json!({ "id": report["exportId"], "index": index, "offset": offset }),
+        )
+    };
     let target = dir.path().join("export.txt");
     let check_export = |report: &Value, expected: &[u8]| {
         let id = report["exportId"].as_str().expect("成功整理后应有导出 ID");
@@ -58,6 +64,7 @@ fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
         invoke("release_trim_result", json!({ "id": id })).unwrap();
         invoke("release_trim_result", json!({ "id": id })).unwrap();
         assert!(invoke("export_trim_result", args).is_err());
+        assert!(preview(report, 0, 0).is_err());
         assert_eq!(fs::read(&target).unwrap(), expected);
     };
     let trim = trim_files(&[&moved_first, &file]);
@@ -67,28 +74,91 @@ fn registered_ipc_accepts_frontend_arguments_and_rejects_failures() {
     assert_eq!(trim["lineCount"], 2);
     assert_eq!(trim["byteCount"], ordered.len());
     assert_eq!(trim["truncated"], false);
+    assert_eq!(
+        trim["fileRanges"],
+        json!([
+            { "path": &moved_first, "startLine": 1, "endLine": 1, "byteCount": "init();".len() },
+            { "path": &file, "startLine": 2, "endLine": 2, "byteCount": "let n = 3;\n".len() }
+        ])
+    );
+    fs::write(&moved_first, "changed after trimming").unwrap();
+    assert_eq!(
+        preview(&trim, 0, 0).unwrap(),
+        json!({ "text": "init();", "nextOffset": null })
+    );
+    assert_eq!(
+        preview(&trim, 1, 0).unwrap(),
+        json!({ "text": "let n = 3;\n", "nextOffset": null })
+    );
+    assert!(preview(&trim, 2, 0).is_err());
     check_export(&trim, ordered.as_bytes());
 
     let empty_file = dir.path().join("empty.txt");
     fs::write(&empty_file, []).unwrap();
-    let empty = trim_files(&[&empty_file]);
+    let absent = dir.path().join("absent.txt");
+    let empty = trim_files(&[&absent, &empty_file]);
     assert_eq!(empty["result"], "");
     assert_eq!(empty["processed"], 1);
     assert_eq!(empty["lineCount"], 0);
     assert_eq!(empty["byteCount"], 0);
     assert_eq!(empty["truncated"], false);
+    assert_eq!(empty["skipped"][0]["path"], json!(&absent));
+    assert_eq!(
+        empty["fileRanges"],
+        json!([{
+            "path": &empty_file, "startLine": null, "endLine": null, "byteCount": 0
+        }])
+    );
+    assert_eq!(
+        preview(&empty, 0, 0).unwrap(),
+        json!({ "text": "", "nextOffset": null })
+    );
+    assert!(preview(&empty, 0, 1).is_err());
     check_export(&empty, b"");
 
     let large_file = dir.path().join("large.txt");
     let prefix = "a".repeat(256 * 1024 - 2);
     let complete = format!("{prefix}🌈\r\n结束");
     fs::write(&large_file, &complete).unwrap();
-    let large = trim_files(&[&large_file]);
+    let late_file = dir.path().join("tail.txt");
+    let tail = "预览之外\r\n";
+    fs::write(&late_file, tail).unwrap();
+    let large = trim_files(&[&large_file, &late_file]);
+    let combined = format!("{complete}\n{tail}");
     assert_eq!(large["result"].as_str(), Some(prefix.as_str()));
-    assert_eq!(large["lineCount"], 2);
-    assert_eq!(large["byteCount"], complete.len());
+    assert_eq!(large["lineCount"], 3);
+    assert_eq!(large["byteCount"], combined.len());
     assert_eq!(large["truncated"], true);
-    check_export(&large, complete.as_bytes());
+    assert_eq!(
+        large["fileRanges"],
+        json!([
+            { "path": &large_file, "startLine": 1, "endLine": 2, "byteCount": complete.len() },
+            { "path": &late_file, "startLine": 3, "endLine": 3, "byteCount": tail.len() }
+        ])
+    );
+    let first_page = preview(&large, 0, 0).unwrap();
+    let next_offset = first_page["nextOffset"].as_u64().unwrap();
+    assert_eq!(next_offset, 64 * 1024);
+    assert_eq!(
+        first_page["text"].as_str().unwrap(),
+        &complete[..next_offset as usize]
+    );
+    assert_eq!(
+        preview(&large, 0, prefix.len() as u64).unwrap(),
+        json!({ "text": "🌈\r\n结束", "nextOffset": null })
+    );
+    assert!(preview(&large, 0, prefix.len() as u64 + 1).is_err());
+    fs::remove_file(&late_file).unwrap();
+    assert_eq!(
+        preview(&large, 1, 0).unwrap(),
+        json!({ "text": tail, "nextOffset": null })
+    );
+    assert_eq!(
+        preview(&large, 1, tail.len() as u64).unwrap(),
+        json!({ "text": "", "nextOffset": null })
+    );
+    assert!(preview(&large, 1, tail.len() as u64 + 1).is_err());
+    check_export(&large, combined.as_bytes());
     let missing = dir.path().join("missing");
     let error = invoke("get_files", options(&missing)).unwrap_err();
     assert!(error.as_str().unwrap().contains("missing"), "{error}");

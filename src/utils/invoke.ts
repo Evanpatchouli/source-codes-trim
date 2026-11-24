@@ -34,6 +34,10 @@ type InvokeMap = {
     args: { id: string; path: string };
     returns: void;
   };
+  read_trim_file: {
+    args: { id: string; index: number; offset: number };
+    returns: { text: string; nextOffset: number | null };
+  };
   release_trim_result: {
     args: { id: string };
     returns: void;

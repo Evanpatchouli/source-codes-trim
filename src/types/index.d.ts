@@ -8,11 +8,19 @@ declare type FileItem = {
 declare interface TrimSourceCodesResult {
   result: string;
   processed: number;
+  fileRanges: SourceFileRange[];
   skipped: FileIssue[];
   byteCount: number;
   lineCount: number;
   truncated: boolean;
   exportId: string | null;
+}
+
+declare interface SourceFileRange {
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+  byteCount: number;
 }
 
 declare interface FileIssue {
