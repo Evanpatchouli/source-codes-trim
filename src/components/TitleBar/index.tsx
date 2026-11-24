@@ -15,7 +15,8 @@ import BuyMeCoffee from "./BuyMeCoffee";
 import { fetch } from "@tauri-apps/plugin-http";
 import { open } from "@tauri-apps/plugin-shell";
 import Update from "./Update";
-import compareVersion from "#/utils/compareVersion";
+import type { AvailableRelease } from "#/utils/latestRelease";
+import { errorMessage } from "#/utils/invoke";
 import Cache from "./Cache";
 import "./index.css";
 
@@ -71,20 +72,25 @@ export default function TitleBar() {
     },
   });
 
-  const [latestVersion, setLatestVersion] = useState("");
-  const [latestVersionPublishedAt, setLatestVersionPublishedAt] = useState("");
-  const [latestVersionURL, setLatestVersionURL] = useState("");
+  const [release, setRelease] = useState<AvailableRelease | null>(null);
+  const checkingUpdate = useRef(false);
 
   const UpdateDialog = useDialog({
     varient: "primary",
-    content: <Update v={latestVersion} published_at={latestVersionPublishedAt} />,
+    content: release && <Update v={release.version} published_at={release.publishedAt} />,
     canCelProps: {
       label: "关闭",
     },
     confirmProps: {
       label: "前往下载",
-      onClick: () => {
-        open(latestVersionURL);
+      onClick: async () => {
+        if (!release) return;
+        try {
+          await open(release.htmlUrl);
+          UpdateDialog.close();
+        } catch (error) {
+          toast.error(`打开发布页失败：${errorMessage(error)}`, { position: "bottom-right" });
+        }
       },
     },
   });
@@ -118,25 +124,25 @@ export default function TitleBar() {
     CacheDialog.open();
   };
   const onClickCheckUpdate = async () => {
+    if (checkingUpdate.current) return;
+    checkingUpdate.current = true;
     const toastId = toast.loading("正在检查更新", {
       position: "bottom-right",
     });
     try {
-      const res = await fetch("https://api.github.com/repos/Evanpatchouli/source-codes-trim/releases/latest", {
-        headers: {
-          "User-Agent": window?.navigator?.userAgent || "SourceCodesTrim",
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-        },
-      });
-      const current_version = packageJson.info.version;
-      const data = (await res.json()) as ApiGithub.ResponseLatestRelease;
-      const latest_version = data.tag_name || current_version;
-      setLatestVersion(latest_version);
-      setLatestVersionPublishedAt(data.published_at);
-      setLatestVersionURL(data.url);
-      const shouldUpdate = compareVersion(packageJson.info.version, latest_version) < 0;
-      if (shouldUpdate) {
+      const [res, { readAvailableRelease }] = await Promise.all([
+        fetch("https://api.github.com/repos/Evanpatchouli/source-codes-trim/releases/latest", {
+          headers: {
+            "User-Agent": window?.navigator?.userAgent || "SourceCodesTrim",
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+          },
+        }),
+        import("#/utils/latestRelease"),
+      ]);
+      const available = await readAvailableRelease(res, packageJson.version);
+      setRelease(available);
+      if (available) {
         toast.remove(toastId);
         UpdateDialog.open();
       } else {
@@ -145,11 +151,9 @@ export default function TitleBar() {
         });
       }
     } catch (error) {
-      toast.remove(toastId);
-      console.error(error);
-      toast.error("检查更新失败", {
-        position: "bottom-right",
-      });
+      toast.error(`检查更新失败：${errorMessage(error)}`, { id: toastId, position: "bottom-right" });
+    } finally {
+      checkingUpdate.current = false;
     }
   };
   const onClickAbout = () => InfoDialog.open();
@@ -159,7 +163,7 @@ export default function TitleBar() {
       <Flex alignItems="center" gap="0.5rem">
         <MacOS.TitleBarDots title={packageJson.info.appname} />
         <Menu>
-          <MenuButton className="title-bar-action" id="title-bar-menubtn">
+          <MenuButton className="title-bar-action" id="title-bar-menubtn" aria-label="应用菜单">
             <MoreIcon color="gray.800" />
           </MenuButton>
           <MenuList>

@@ -5,7 +5,6 @@
   "description": "An app to trim source codes",
   "info": {
     "appname": "源码整理器",
-    "version": "0.2.0",
     "description": "源码整理器, 用于整理源码, 生成源码树",
     "date": "2024/10/26",
     "author": {
@@ -49,12 +48,14 @@
     "react-dnd-html5-backend": "^16.0.1",
     "react-dom": "^18.2.0",
     "react-draggable": "^4.4.6",
-    "react-hot-toast": "^2.4.1"
+    "react-hot-toast": "^2.4.1",
+    "semver": "^7.7.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@types/react": "^18.2.15",
     "@types/react-dom": "^18.2.7",
+    "@types/semver": "^7.7.0",
     "@vitejs/plugin-react": "^4.2.1",
     "archiver": "^7.0.1",
     "typescript": "^5.2.2",
