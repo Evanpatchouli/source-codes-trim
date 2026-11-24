@@ -1,4 +1,5 @@
 mod handlers;
+mod source_text;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

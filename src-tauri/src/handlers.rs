@@ -188,6 +188,11 @@ pub fn trim_source_codes(
     trim_newlines: bool,
     trim_comments: bool,
 ) -> Result<TrimSourceCodesResult, String> {
+    let options = crate::source_text::TrimOptions {
+        comments: trim_comments,
+        trailing_whitespace: trim_whitespace,
+        blank_lines: trim_newlines,
+    };
     let mut result = String::new();
     let mut skipped = Vec::new();
     for file in files {
@@ -200,41 +205,18 @@ pub fn trim_source_codes(
             }
         };
 
-        let mut lines = content.lines();
-        while let Some(line) = lines.next() {
-            let mut line = line.to_string();
-
-            // 去除注释
-            if trim_comments {
-                if let Some(pos) = line.find("//") {
-                    line = line[..pos].to_string();
+        let mut needs_separator = !result.is_empty() && !result.ends_with('\n');
+        crate::source_text::write_source(file, &content, &options, |part| {
+            if !part.is_empty() {
+                if needs_separator {
+                    result.push('\n');
+                    needs_separator = false;
                 }
-                if let Some(pos) = line.find("/*") {
-                    if let Some(end_pos) = line.find("*/") {
-                        line = line[..pos].to_string() + &line[end_pos + 2..];
-                    } else {
-                        line = line[..pos].to_string();
-                    }
-                }
+                result.push_str(part);
             }
-
-            // 去除行尾空白字符
-            if trim_whitespace {
-                line = line.trim_end().to_string();
-            }
-
-            // 跳过空行
-            if line.is_empty() {
-                continue;
-            }
-
-            result.push_str(&line);
-
-            // 添加换行符
-            if trim_newlines {
-                result.push('\n');
-            }
-        }
+            Ok(())
+        })
+        .map_err(|e| e.to_string())?;
     }
     Ok(TrimSourceCodesResult { result, skipped })
 }
