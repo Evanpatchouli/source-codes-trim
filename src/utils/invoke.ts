@@ -31,7 +31,7 @@ type InvokeMap = {
   };
   open_directory_in_fs: {
     args: { path: string };
-    returns: boolean;
+    returns: void;
   };
 };
 

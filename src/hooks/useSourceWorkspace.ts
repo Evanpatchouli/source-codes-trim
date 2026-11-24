@@ -1,7 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import selectedFilePaths from "../utils/selectedFilePaths.ts";
 import invoke, { errorMessage } from "../utils/invoke.ts";
-import sleep from "../utils/sleep.ts";
 
 type ScanOptions = { path: string; includes: string; excludes: string; excludeEmptyDirs: boolean };
 type Output = {
@@ -19,11 +18,6 @@ function getMaxContentLength() {
     memory?: { jsHeapSizeLimit: number; usedJSHeapSize: number };
   }).memory;
   return memory ? Math.floor((memory.jsHeapSizeLimit - memory.usedJSHeapSize) * 0.1) : 1000000;
-}
-
-async function waitForLoading(started: number) {
-  const remaining = 200 - (performance.now() - started);
-  if (remaining > 0) await sleep(remaining);
 }
 
 export function createSourceWorkspace() {
@@ -66,10 +60,8 @@ export function createSourceWorkspace() {
     const request = ++scanRequest;
     trimRequest++;
     update({ ...emptyScan, ...emptyOutput, treeLoading: true, ignoredPaths: new Set() });
-    const started = performance.now();
     try {
       const scan = await invoke("get_files", options);
-      await waitForLoading(started);
       if (request === scanRequest) update({ files: scan.files, scanIssues: scan.skipped, treeLoading: false });
     } catch (error) {
       if (request === scanRequest) update({ scanError: `扫描失败：${errorMessage(error)}`, treeLoading: false });
@@ -81,7 +73,6 @@ export function createSourceWorkspace() {
     if (!files.length) return;
     const request = ++trimRequest;
     update({ ...emptyOutput, contentState: "loading" });
-    const started = performance.now();
     try {
       const { result, processed, skipped } = await invoke("trim_source_codes", {
         files: selectedFilePaths(files, ignoredPaths),
@@ -89,7 +80,6 @@ export function createSourceWorkspace() {
         trimNewlines: true,
         trimComments: true,
       });
-      await waitForLoading(started);
       if (request !== trimRequest) return;
       const trimReport = { processed, skipped };
       if (processed === 0 && skipped.length) {
