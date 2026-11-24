@@ -1,134 +1,149 @@
-const fs = require("fs");
-const path = require("path");
-const fse = require("fs-extra");
-const archiver = require('archiver');
-const pkg = require('../package.json');
+const { createHash } = require("node:crypto");
+const { once } = require("node:events");
+const { createReadStream, createWriteStream } = require("node:fs");
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const { pipeline } = require("node:stream/promises");
+const archiver = require("archiver");
+const yauzl = require("yauzl");
 
-const sourceDir = "./src-tauri/target/release";
-const targetDir = "./release/portable";
-const bundleSourceDir = path.join(sourceDir, "bundle");
-const releaseDir = "./release";
-
-// 清空 releaseDir 目录
-if (fs.existsSync(releaseDir)) {
-  fse.emptyDirSync(releaseDir);
+async function digest(stream) {
+  const hash = createHash("sha256");
+  for await (const chunk of stream) hash.update(chunk);
+  return hash.digest("hex");
 }
 
-// 要收集的文件和文件夹列表
-const itemsToCollect = ["source-codes-trim.exe", "README.md", "LICENSE"];
-
-// 创建目标目录，如果不存在
-if (!fs.existsSync(targetDir)) {
-  fs.mkdirSync(targetDir, { recursive: true });
-}
-
-// 复制文件和文件夹
-itemsToCollect.forEach((item) => {
-  const sourcePath = path.join(sourceDir, item);
-  const targetPath = path.join(targetDir, item);
-
-  if (fs.existsSync(sourcePath)) {
-    if (fs.lstatSync(sourcePath).isDirectory()) {
-      fse.copySync(sourcePath, targetPath);
-    } else {
-      fs.copyFileSync(sourcePath, targetPath);
+async function planArchives(root) {
+  const { name, version } = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
+  const base = `${name}_${version}_x64`;
+  const sourceDir = path.join(root, "src-tauri", "target", "release");
+  const inputs = {
+    portable: [`${name}.exe`, "README.md", "LICENSE"],
+    msi: [`bundle/msi/${base}_en-US.msi`],
+    nsis: [`bundle/nsis/${base}-setup.exe`],
+  };
+  const archives = [];
+  for (const [kind, relativePaths] of Object.entries(inputs)) {
+    const files = new Map();
+    for (const relative of relativePaths) {
+      const source = path.join(sourceDir, relative);
+      const stat = await fs.stat(source);
+      if (!stat.isFile() || !stat.size) throw new Error(`发布输入不是有效的非空文件：${source}`);
+      files.set(path.basename(source), { source, hash: await digest(createReadStream(source)) });
     }
-    console.log(`Copied ${item} to ${targetPath}`);
-  } else {
-    console.error(`Source item ${item} does not exist`);
+    archives.push({ name: `${base}_windows_10_${kind}.zip`, files });
   }
-});
+  return archives;
+}
 
-// 复制 bundle/msi 和 bundle/nsis 中的 .msi 和 .exe 文件
-const copyFilesFromDir = (sourceDir, targetDir, extensions) => {
-  if (fs.existsSync(sourceDir)) {
-    const files = fs.readdirSync(sourceDir);
-    files.forEach((file) => {
-      const ext = path.extname(file);
-      if (extensions.includes(ext)) {
-        const sourcePath = path.join(sourceDir, file);
-        const targetPath = path.join(targetDir, file);
-        fs.copyFileSync(sourcePath, targetPath);
-        console.log(`Copied ${file} to ${targetPath}`);
-      }
+async function writeZip(destination, files) {
+  const archive = archiver("zip", { zlib: { level: 9 } });
+  archive.on("warning", (error) => archive.destroy(error));
+  const output = createWriteStream(destination, { flags: "wx" });
+  const written = pipeline(archive, output);
+  const sources = [];
+  try {
+    for (const [name, { source }] of files) {
+      const input = createReadStream(source);
+      sources.push(input);
+      input.on("error", (error) => archive.destroy(error));
+      archive.append(input, { name });
+    }
+    await Promise.all([archive.finalize(), written]);
+  } catch (error) {
+    for (const input of sources) input.destroy();
+    archive.abort();
+    archive.destroy(error);
+    await written.catch(() => {});
+    throw error;
+  }
+}
+
+async function verifyZip(archivePath, files) {
+  const missing = new Map(files);
+  const zip = await yauzl.openPromise(archivePath, { autoClose: false });
+  try {
+    for await (const entry of zip.eachEntry()) {
+      const expected = missing.get(entry.fileName);
+      if (!expected) throw new Error(`ZIP 包含意外或重复条目：${entry.fileName}`);
+      const actual = await digest(await zip.openReadStreamPromise(entry));
+      if (actual !== expected.hash) throw new Error(`ZIP 条目内容校验失败：${entry.fileName}`);
+      missing.delete(entry.fileName);
+    }
+    if (missing.size) throw new Error(`ZIP 缺少条目：${[...missing.keys()].join("、")}`);
+  } finally {
+    const closed = once(zip, "close");
+    zip.close();
+    await closed;
+  }
+}
+
+async function collectRelease(root = path.resolve(__dirname, "..")) {
+  const release = path.join(root, "release");
+  const work = path.join(root, ".collect-release");
+  const next = path.join(work, "next");
+  const previous = path.join(work, "previous");
+  // mkdir 独占本次事务；进程若中途退出，后续发布会保留备份并提示恢复。
+  try {
+    await fs.mkdir(work);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    throw new Error(`已有收集任务或中断的事务：${work}。确认没有任务运行后，若 release 缺失，请先将 ${previous} 恢复为 ${release}；核对已有产物后移走事务目录再重试。`);
+  }
+
+  let preserveBackup = false;
+  let published = false;
+  try {
+    const archives = await planArchives(root);
+    await fs.mkdir(next);
+    for (const archive of archives) {
+      const destination = path.join(next, archive.name);
+      await writeZip(destination, archive.files);
+      await verifyZip(destination, archive.files);
+    }
+
+    const existing = await fs.lstat(release).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
     });
-  } else {
-    console.error(`Source directory ${sourceDir} does not exist`);
+    if (existing && !existing.isDirectory()) {
+      throw new Error(`发布目标必须是实际目录：${release}`);
+    }
+    if (existing) await fs.rename(release, previous);
+    try {
+      await fs.rename(next, release);
+      published = true;
+    } catch (publishError) {
+      if (existing) {
+        try {
+          await fs.rename(previous, release);
+        } catch (restoreError) {
+          preserveBackup = true;
+          throw new Error(`发布失败（${publishError.message}），恢复失败（${restoreError.message}）。旧产物保留在 ${previous}，请将其恢复为 ${release}。`);
+        }
+      }
+      throw publishError;
+    }
+  } finally {
+    if (!preserveBackup) {
+      try {
+        await fs.rm(work, { recursive: true, maxRetries: 3, retryDelay: 100 });
+      } catch (error) {
+        if (!published) throw error;
+        console.warn(`新版本已发布；清理事务目录 ${work} 失败：${error.message}`);
+      }
+    }
   }
-};
-
-const msiDir = path.join(bundleSourceDir, "msi");
-const nsisDir = path.join(bundleSourceDir, "nsis");
-
-copyFilesFromDir(msiDir, releaseDir, [".msi"]);
-copyFilesFromDir(nsisDir, releaseDir, [".exe"]);
-
-async function zipDir(sourceDir, outPath) {
-  const output = fs.createWriteStream(outPath);
-  const arch = archiver('zip', {
-    zlib: { level: 9 } // 设置压缩级别
-  });
-
-  output.on('close', () => {
-    console.log(`Compression finished, totally ${arch.pointer()} bytes.`);
-  });
-
-  arch.on('error', (err) => {
-    throw err;
-  });
-
-  arch.pipe(output);
-
-  arch.directory(sourceDir, false);
-
-  await arch.finalize();
+  return release;
 }
 
-async function zipFile(sourcePath, outPath) {
-  const output = fs.createWriteStream(outPath);
-  const arch = archiver('zip', {
-    zlib: { level: 9 } // 设置压缩级别
-  });
+module.exports = { collectRelease };
 
-  output.on('close', () => {
-    console.log(`Compression finished, totally ${arch.pointer()} bytes.`);
-  });
-
-  arch.on('error', (err) => {
-    throw err;
-  });
-
-  arch.pipe(output);
-
-  arch.append(fs.createReadStream(sourcePath), { name: path.basename(sourcePath) });
-
-  await arch.finalize();
+if (require.main === module) {
+  collectRelease()
+    .then((directory) => console.log(`已校验并发布到 ${directory}`))
+    .catch((error) => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
 }
-
-const portable = path.resolve(targetDir);
-const msi = path.resolve(releaseDir, `${pkg.name}_${pkg.version}_x64_en-US.msi`);
-const nsis = path.resolve(releaseDir, `${pkg.name}_${pkg.version}_x64-setup.exe`);
-
-zipDir(portable, path.resolve(releaseDir, `${pkg.name}_${pkg.version}_x64_windows_10_portable.zip`))
-  .then(() => {
-    // 删除 portable 目录
-    fse.removeSync(portable);
-  }).catch(err => {
-    console.error(err);
-  });
-
-zipFile(msi, path.resolve(releaseDir, `${pkg.name}_${pkg.version}_x64_windows_10_msi.zip`))
-  .then(() => {
-    // 删除 msi 文件
-    fse.removeSync(msi);
-  }).catch(err => {
-    console.error(err);
-  });
-
-zipFile(nsis, path.resolve(releaseDir, `${pkg.name}_${pkg.version}_x64_windows_10_nsis.zip`))
-  .then(() => {
-    // 删除 nsis 文件
-    fse.removeSync(nsis);
-  }).catch(err => {
-    console.error(err);
-  });

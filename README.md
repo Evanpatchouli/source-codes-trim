@@ -35,6 +35,12 @@
 - `npm run typecheck` 检查应用与 Vite 配置。`npm run build` 会先运行类型检查，再生成前端产物。
 - Windows 使用 MSVC 工具链执行 `cargo +stable-x86_64-pc-windows-msvc test --locked --manifest-path src-tauri/Cargo.toml`，覆盖核心逻辑与 Tauri IPC。其他桌面平台可使用对应的原生 Rust 工具链。
 
+## 收集 Windows 发布包
+
+完成 Windows x64 的 Tauri 发布构建后，运行 `npm run collect-release`。脚本检查便携版主程序、说明文档、许可证和当前版本的 MSI、NSIS 安装包。三个 ZIP 写入并校验成功后才替换 `release/`。缺少输入时命令返回失败，上一版发布包仍可使用。
+
+如果进程在替换目录时意外中断，先确认没有其他收集任务在运行。若 `release/` 缺失且 `.collect-release/previous/` 存在，将后者恢复为 `release/`。核对发布文件后，移走遗留的 `.collect-release/` 目录即可重试。
+
 ## 开源协议
 
 MIT
