@@ -16,7 +16,7 @@ type InvokeMap = {
       excludes: string;
       excludeEmptyDirs: boolean;
     };
-    returns: FileItem[];
+    returns: ScanResult;
   };
   trim_source_codes: {
     args: {

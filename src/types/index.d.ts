@@ -10,6 +10,16 @@ declare interface TrimSourceCodesResult {
   skipped: string[];
 }
 
+declare interface FileIssue {
+  path: string;
+  reason: string;
+}
+
+declare interface ScanResult {
+  files: FileItem[];
+  skipped: FileIssue[];
+}
+
 declare namespace ApiGithub {
   declare type Author = Record<string, any> & {
     avatar_url: string;

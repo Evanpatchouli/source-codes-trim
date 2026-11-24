@@ -4,6 +4,7 @@ import { Box, Button, Flex, FormLabel, Input, Switch, Text, Textarea, Tooltip } 
 import { AddIcon, CopyIcon } from "@chakra-ui/icons";
 import TitleBar from "#components/TitleBar";
 import FileTree, { TreeRef } from "#components/FileTree";
+import FileIssues from "#components/FileIssues";
 import flatternFileTree from "#utils/flatternFileTree";
 import { Resizable } from "re-resizable";
 import invoke from "#utils/invoke";
@@ -46,6 +47,7 @@ function App() {
   const [excludes, setExcludes] = useState<string>("");
   const [exclude_empty_dirs, setExcludeEmptyDirs] = useState<boolean>(true);
   const [files, setFiles] = useState<FileItem[]>([]);
+  const [scanIssues, setScanIssues] = useState<FileIssue[]>([]);
   const [treeLoading, setTreeLoading] = useState<boolean>(false);
   const [content, setContent] = useState<string>("");
   const [contentState, setContentState] = useState<"loading" | "loaded" | "error">("loaded");
@@ -176,6 +178,7 @@ function App() {
                     if (path && path !== root) {
                       setRoot(path);
                       setFiles([]);
+                      setScanIssues([]);
                       setContent("");
                     }
                   }}
@@ -273,8 +276,9 @@ function App() {
                   <Button
                     onClick={async () => {
                       setTreeLoading(true);
+                      setScanIssues([]);
                       const timestart = performance.now();
-                      const files = await invoke("get_files", {
+                      const scan = await invoke("get_files", {
                         path: root,
                         includes,
                         excludes,
@@ -287,7 +291,8 @@ function App() {
                       }
                       setTreeLoading(false);
                       queueMicrotask(() => {
-                        setFiles(typeof files === "string" ? [] : files);
+                        setFiles(typeof scan === "string" ? [] : scan.files);
+                        setScanIssues(typeof scan === "string" ? [] : scan.skipped);
                       });
                     }}
                     disabled={!root}
@@ -336,6 +341,7 @@ function App() {
                 </Flex>
               </Flex>
             </Box>
+            <FileIssues label="扫描" issues={scanIssues} />
             {/** @Evanpatchouli 下面的 2rem 是因为 main-viewbox 的 padding 为 1rem */}
             <Box
               className="content-container"

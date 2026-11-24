@@ -101,6 +101,21 @@ html {
   }
 }
 
+.file-issues {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.file-issues summary {
+  cursor: pointer;
+}
+
+.file-issues ul {
+  max-height: 7rem;
+  overflow: auto;
+  padding-left: 1.5rem;
+}
+
 pre#content-box {
   position: absolute;
   top: 0;
