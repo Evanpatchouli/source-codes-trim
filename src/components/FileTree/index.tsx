@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useImperativeHandle, forwardRef } from "react";
+import React, { useState, useCallback } from "react";
 import "./index.css";
 import classes from "#/utils/classes";
 import { DragHandleIcon, Flex, IconButton, Tooltip, ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
@@ -31,20 +31,17 @@ const formatTree = (data: FileItem[]): Tree<FileItem> => {
   return data.map((item) => buildTree(item, null));
 };
 
-export type TreeRef = {
-  getIgnoredPaths: () => Array<string>;
-};
-
 interface FileTreeProps {
   items: Array<FileItem>;
+  ignoredPaths: ReadonlySet<string>;
+  onToggleIgnored: (path: string) => void;
   loading?: boolean;
 }
 
 const grabable: boolean = false;
 
-export default forwardRef<TreeRef, FileTreeProps>(function FileTree(props, ref) {
+export default function FileTree(props: FileTreeProps) {
   const [expanded, setExpanded] = useState<{ [key: string]: boolean }>({});
-  const [ignored, setIgnored] = useState<{ [key: string]: boolean }>({});
 
   const toggleExpand = useCallback((path: string) => {
     setExpanded((prev) => ({ ...prev, [path]: !prev[path] }));
@@ -74,13 +71,9 @@ export default forwardRef<TreeRef, FileTreeProps>(function FileTree(props, ref) 
     console.log(`Dropped on ${targetPath}`, item);
   }, []);
 
-  useImperativeHandle(ref, () => ({
-    getIgnoredPaths: () => Object.keys(ignored).filter((i) => ignored[i]),
-  }));
-
   const renderTree = (node: TreeNode<FileItem>, root: boolean) => {
     const isExpanded = expanded[node.data.path];
-    const isIgnored = ignored[node.data.path];
+    const isIgnored = props.ignoredPaths.has(node.data.path);
     return (
       <div key={node.data.path} className={classes("tree", root && "tree-root")}>
         <div
@@ -104,7 +97,7 @@ export default forwardRef<TreeRef, FileTreeProps>(function FileTree(props, ref) 
                 color={isIgnored ? "red.400" : "blue.400"}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setIgnored((prev) => ({ ...prev, [node.data.path]: !prev[node.data.path] }));
+                  props.onToggleIgnored(node.data.path);
                 }}
               >
                 {isIgnored ? <ViewOffIcon /> : <ViewIcon />}
@@ -147,4 +140,4 @@ export default forwardRef<TreeRef, FileTreeProps>(function FileTree(props, ref) 
   const items = formatTree(props.items);
 
   return <div className="tree-wrapper">{items.map((i) => renderTree(i, true))}</div>;
-});
+}

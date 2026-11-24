@@ -3,13 +3,12 @@ import { open as select } from "@tauri-apps/plugin-dialog";
 import { Box, Button, Flex, FormLabel, Input, Switch, Text, Textarea, Tooltip } from "@chakra-ui/react";
 import { AddIcon, CopyIcon } from "@chakra-ui/icons";
 import TitleBar from "#components/TitleBar";
-import FileTree, { TreeRef } from "#components/FileTree";
+import FileTree from "#components/FileTree";
 import FileIssues from "#components/FileIssues";
-import flatternFileTree from "#utils/flatternFileTree";
 import { Resizable } from "re-resizable";
 import invoke, { errorMessage } from "#utils/invoke";
 import Loading from "./components/Loading";
-import sleep from "./utils/sleep";
+import useSourceWorkspace from "./hooks/useSourceWorkspace";
 import Tip from "./components/Tip";
 import { useLocalStorage } from "@uidotdev/usehooks";
 import Broom from "./components/icons/Broom";
@@ -25,39 +24,15 @@ node_modules
 /src-tauri/target
 `;
 
-const minLoadingTime = 200;
-
-const MAX_CONTENT_LENGTH = 1000000; // 设置最大内容长度 100 万字符
-
-const getMaxContentLength = () => {
-  if ("memory" in performance) {
-    // @ts-ignore
-    const { totalJSHeapSize, usedJSHeapSize, jsHeapSizeLimit } = performance.memory;
-    const availableMemory = jsHeapSizeLimit - usedJSHeapSize;
-    // 假设我们使用可用内存的 10% 作为最大内容长度
-    return Math.floor(availableMemory * 0.1);
-  }
-  // 如果 performance.memory 不可用，使用默认值
-  return MAX_CONTENT_LENGTH;
-};
-
 function App() {
-  const [root, setRoot] = useState<string>("");
-  const [includes, setIncludes] = useState<string>("");
-  const [excludes, setExcludes] = useState<string>("");
-  const [exclude_empty_dirs, setExcludeEmptyDirs] = useState<boolean>(true);
-  const [files, setFiles] = useState<FileItem[]>([]);
-  const [scanIssues, setScanIssues] = useState<FileIssue[]>([]);
-  const [scanError, setScanError] = useState("");
-  const [treeLoading, setTreeLoading] = useState<boolean>(false);
-  const [content, setContent] = useState<string>("");
-  const [contentState, setContentState] = useState<"loading" | "loaded" | "error">("loaded");
-  const [trimReport, setTrimReport] = useState<Pick<TrimSourceCodesResult, "processed" | "skipped"> | null>(null);
+  const {
+    options: { path: root, includes, excludes, excludeEmptyDirs },
+    files, ignoredPaths, scanIssues, scanError, treeLoading, content, contentState, trimReport,
+    setOption, toggleIgnored, clearOutput, scanFiles, trimFiles,
+  } = useSourceWorkspace();
   const lineNumber = (content ? content.split("\n") : []).length;
 
   const disable_trim_source_codes = files.length === 0;
-
-  const treeRef = useRef<TreeRef>(null);
 
   const openRoot = () =>
     root &&
@@ -79,66 +54,6 @@ function App() {
       toast.error("复制失败，请手动复制", {
         position: "bottom-right",
       });
-    }
-  };
-
-  const handleClear = () => {
-    setContent("");
-    setContentState("loaded");
-    setTrimReport(null);
-  };
-
-  const scanFiles = async () => {
-    setTreeLoading(true);
-    setScanIssues([]);
-    setScanError("");
-    const started = performance.now();
-    try {
-      const scan = await invoke("get_files", { path: root, includes, excludes, excludeEmptyDirs: exclude_empty_dirs });
-      const elapsed = performance.now() - started;
-      if (elapsed < minLoadingTime) await sleep(minLoadingTime - elapsed);
-      setFiles(scan.files);
-      setScanIssues(scan.skipped);
-    } catch (error) {
-      setFiles([]);
-      setScanError(`扫描失败：${errorMessage(error)}`);
-    } finally {
-      setTreeLoading(false);
-    }
-  };
-
-  const trimFiles = async () => {
-    setContentState("loading");
-    setTrimReport(null);
-    const started = performance.now();
-    try {
-      const ignoredPaths = treeRef.current?.getIgnoredPaths() || [];
-      const pathList = flatternFileTree(files)
-        .filter((i) => !i.is_dir)
-        .map((i) => i.path)
-        .filter((i) => !ignoredPaths.some((j) => i.startsWith(j)));
-      const { result, processed, skipped } = await invoke("trim_source_codes", {
-        files: pathList,
-        trimWhitespace: true,
-        trimNewlines: true,
-        trimComments: true,
-      });
-      const elapsed = performance.now() - started;
-      if (elapsed < minLoadingTime) await sleep(minLoadingTime - elapsed);
-      setTrimReport({ processed, skipped });
-      if (processed === 0 && skipped.length > 0) {
-        setContent("整理失败，所选文件均被跳过");
-        setContentState("error");
-      } else if (result.length > getMaxContentLength()) {
-        setContent("内容过长，无法显示");
-        setContentState("error");
-      } else {
-        setContent(result);
-        setContentState("loaded");
-      }
-    } catch (error) {
-      setContent(`整理失败：${errorMessage(error)}`);
-      setContentState("error");
     }
   };
 
@@ -193,7 +108,7 @@ function App() {
                 </Text>
               </Tooltip>
             </header>
-            <FileTree items={files} ref={treeRef} loading={treeLoading} />
+            <FileTree key={root} items={files} ignoredPaths={ignoredPaths} onToggleIgnored={toggleIgnored} loading={treeLoading} />
           </Resizable>
           <Box
             id="main-viewbox"
@@ -213,10 +128,7 @@ function App() {
                 <Input
                   flex="1"
                   value={root}
-                  onChange={(e) => {
-                    e.preventDefault();
-                    setRoot(e.target.value);
-                  }}
+                  onChange={(e) => setOption("path", e.target.value)}
                   name="root"
                   size="sm"
                   placeholder="输入或选择你的项目根目录的绝对路径..."
@@ -233,13 +145,7 @@ function App() {
                       directory: true,
                       multiple: false,
                     });
-                    if (path && path !== root) {
-                      setRoot(path);
-                      setFiles([]);
-                      setScanIssues([]);
-                      setScanError("");
-                      handleClear();
-                    }
+                    if (path) setOption("path", path);
                   }}
                   size="sm"
                   className="nowrap"
@@ -255,10 +161,7 @@ function App() {
                 <Textarea
                   name="includes"
                   value={includes}
-                  onChange={(e) => {
-                    e.preventDefault();
-                    setIncludes(e.target.value);
-                  }}
+                  onChange={(e) => setOption("includes", e.target.value)}
                   size="sm"
                   placeholder={includesPlaceholder}
                   sx={{
@@ -275,10 +178,7 @@ function App() {
                 <Textarea
                   name="excludes"
                   value={excludes}
-                  onChange={(e) => {
-                    e.preventDefault();
-                    setExcludes(e.target.value);
-                  }}
+                  onChange={(e) => setOption("excludes", e.target.value)}
                   size="sm"
                   placeholder={excludesPlaceholder}
                   sx={{
@@ -296,11 +196,8 @@ function App() {
                     </FormLabel>
                     <Switch
                       name="exclude_empty_dirs"
-                      isChecked={exclude_empty_dirs}
-                      onChange={(e) => {
-                        e.preventDefault();
-                        setExcludeEmptyDirs(e.target.checked);
-                      }}
+                      isChecked={excludeEmptyDirs}
+                      onChange={(e) => setOption("excludeEmptyDirs", e.target.checked)}
                       size="sm"
                     />
                   </Flex>
@@ -372,17 +269,18 @@ function App() {
                 right="1rem"
                 top="0.5rem"
                 alignItems="center"
-                opacity={contentState === "loaded" ? 1 : 0}
-                zIndex={contentState === "loaded" ? 1 : -1}
+                zIndex={1}
               >
-                <Text fontSize="sm" color="GrayText">
-                  {lineNumber} 行
-                </Text>
-                <Button size="sm" variant="ghost" color="GrayText" onClick={handleCopy} ml="0.5rem">
-                  <Text fontWeight="medium">复制</Text>
-                  <CopyIcon fontSize="sm" ml="0.2rem" />
-                </Button>
-                <Button size="sm" variant="ghost" color="GrayText" onClick={handleClear}>
+                {contentState === "loaded" && (
+                  <>
+                    <Text fontSize="sm" color="GrayText">{lineNumber} 行</Text>
+                    <Button size="sm" variant="ghost" color="GrayText" onClick={handleCopy} ml="0.5rem">
+                      <Text fontWeight="medium">复制</Text>
+                      <CopyIcon fontSize="sm" ml="0.2rem" />
+                    </Button>
+                  </>
+                )}
+                <Button size="sm" variant="ghost" color="GrayText" onClick={clearOutput}>
                   <Text fontWeight="medium">清除</Text>
                   <Broom fontSize="sm" ml="0.2rem" />
                 </Button>
