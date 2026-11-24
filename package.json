@@ -1,7 +1,7 @@
 {
   "name": "source-codes-trim",
   "private": true,
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "An app to trim source codes",
   "info": {
     "appname": "源码整理器",
