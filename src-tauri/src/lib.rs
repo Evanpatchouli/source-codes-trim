@@ -1,16 +1,21 @@
 mod file_issue;
 mod filter;
 mod handlers;
+mod result_store;
 mod scanner;
 mod source_text;
 mod trim;
 
 pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.invoke_handler(tauri::generate_handler![
-        handlers::get_files,
-        handlers::trim_source_codes,
-        handlers::open_directory_in_fs
-    ])
+    builder
+        .manage(result_store::ResultStore::default())
+        .invoke_handler(tauri::generate_handler![
+            handlers::get_files,
+            handlers::trim_source_codes,
+            handlers::export_trim_result,
+            handlers::release_trim_result,
+            handlers::open_directory_in_fs
+        ])
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

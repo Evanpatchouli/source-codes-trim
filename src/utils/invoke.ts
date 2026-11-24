@@ -29,6 +29,14 @@ type InvokeMap = {
     };
     returns: TrimSourceCodesResult;
   };
+  export_trim_result: {
+    args: { id: string; path: string };
+    returns: void;
+  };
+  release_trim_result: {
+    args: { id: string };
+    returns: void;
+  };
   open_directory_in_fs: {
     args: { path: string };
     returns: void;

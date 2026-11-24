@@ -1,4 +1,5 @@
 use crate::filter::FileFilter;
+use crate::result_store::ResultStore;
 use crate::scanner::{scan, ScanResult};
 use crate::source_text::TrimOptions;
 use crate::trim::{trim_files, TrimResult};
@@ -28,6 +29,7 @@ pub async fn get_files(
 
 #[tauri::command]
 pub async fn trim_source_codes(
+    store: tauri::State<'_, ResultStore>,
     files: Vec<PathBuf>,
     trim_whitespace: bool,
     trim_newlines: bool,
@@ -38,7 +40,27 @@ pub async fn trim_source_codes(
         trailing_whitespace: trim_whitespace,
         blank_lines: trim_newlines,
     };
-    run_blocking(move || trim_files(&files, &options)).await
+    let store = store.inner().clone();
+    run_blocking(move || trim_files(&files, &options, &store)).await
+}
+
+#[tauri::command]
+pub async fn export_trim_result(
+    store: tauri::State<'_, ResultStore>,
+    id: String,
+    path: PathBuf,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    run_blocking(move || store.export(&id, &path)).await
+}
+
+#[tauri::command]
+pub async fn release_trim_result(
+    store: tauri::State<'_, ResultStore>,
+    id: String,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    run_blocking(move || store.release(&id)).await
 }
 
 #[tauri::command]

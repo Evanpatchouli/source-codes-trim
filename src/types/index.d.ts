@@ -9,6 +9,9 @@ declare interface TrimSourceCodesResult {
   result: string;
   processed: number;
   skipped: FileIssue[];
+  byteCount: number;
+  lineCount: number;
+  exportId: string | null;
 }
 
 declare interface FileIssue {

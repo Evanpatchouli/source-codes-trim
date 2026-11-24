@@ -19,7 +19,9 @@ const scanResult = (path) => ({
   files: [{ path, name: path.split("/").at(-1), is_dir: false, children: [] }],
   skipped: [],
 });
-const trimResult = (result) => ({ result, processed: 1, skipped: [] });
+const trimResult = (result) => ({
+  result, processed: 1, skipped: [], byteCount: Buffer.byteLength(result), lineCount: result ? 1 : 0, exportId: null,
+});
 
 test("将原先排除的目录设为新根后可整理其中的文件", async (t) => {
   const { workspace, pending } = setup(t);
@@ -106,8 +108,8 @@ test("整理失败可重试，后到的历史整理不能覆盖成功结果，�
   assert.equal(workspace.getSnapshot().content, "当前结果");
   assert.equal(workspace.getSnapshot().contentState, "loaded");
   const final = workspace.trimFiles();
+  workspace.dispose();
   const beforeUnmount = workspace.getSnapshot();
-  workspace.invalidateRequests();
   pending[4].reject("卸载后的错误");
   await final;
   assert.equal(workspace.getSnapshot(), beforeUnmount);

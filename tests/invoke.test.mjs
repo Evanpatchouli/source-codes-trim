@@ -12,7 +12,8 @@ afterEach(() => {
 
 test("整理命令透传成功结果和逐文件错误", async () => {
   globalThis.window = {};
-  const response = { result: "ok\n", processed: 1, skipped: [{ path: "missing.ts", reason: "找不到文件" }] };
+  const response = { result: "ok\n", byteCount: 3, lineCount: 1, exportId: null,
+    processed: 1, skipped: [{ path: "missing.ts", reason: "找不到文件" }] };
   mockIPC(async (command, args) => {
     assert.equal(command, "trim_source_codes");
     assert.deepEqual(args, trimArgs);
@@ -26,7 +27,7 @@ test("整理命令保留 IPC 拒绝，调用方可以重试", async () => {
   mockIPC(async () => { throw "读取失败"; });
   await assert.rejects(invoke("trim_source_codes", trimArgs), (error) => error === "读取失败");
 
-  const response = { result: "", processed: 0, skipped: [] };
+  const response = { result: "", processed: 0, skipped: [], byteCount: 0, lineCount: 0, exportId: null };
   mockIPC(async () => response);
   assert.deepEqual(await invoke("trim_source_codes", trimArgs), response);
 });

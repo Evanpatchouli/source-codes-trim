@@ -28,9 +28,9 @@ function App() {
   const {
     options: { path: root, includes, excludes, excludeEmptyDirs },
     files, ignoredPaths, scanIssues, scanError, treeLoading, content, contentState, trimReport,
-    setOption, toggleIgnored, clearOutput, scanFiles, trimFiles,
+    setOption, toggleIgnored, clearOutput, scanFiles, trimFiles, exportResult, exporting, exportFeedback,
   } = useSourceWorkspace();
-  const lineNumber = (content ? content.split("\n") : []).length;
+  const truncated = Boolean(trimReport?.exportId);
 
   const disable_trim_source_codes = files.length === 0;
 
@@ -47,7 +47,7 @@ function App() {
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(content);
-      toast.success("已复制到剪贴板", {
+      toast.success(truncated ? "已复制预览到剪贴板" : "已复制到剪贴板", {
         position: "bottom-right",
       });
     } catch (error) {
@@ -117,6 +117,7 @@ function App() {
             rowGap="1rem"
             w="100%"
             flex="1"
+            minW={0}
             boxSizing="border-box"
             p="1rem"
           >
@@ -253,31 +254,29 @@ function App() {
             {trimReport && (
               <Text role="status" fontSize="sm">
                 已处理 {trimReport.processed} 个文件
-                {contentState === "loaded" && !content && (trimReport.processed ? "，整理结果为空" : "，未选择待整理文件")}
+                {contentState === "loaded" && trimReport.byteCount === 0 && (trimReport.processed ? "，整理结果为空" : "，未选择待整理文件")}
+                {truncated && `，当前仅预览开头部分，完整内容共 ${trimReport.byteCount.toLocaleString()} 字节`}
               </Text>
             )}
             {trimReport && <FileIssues label="整理" issues={trimReport.skipped} />}
-            {/** @Evanpatchouli 下面的 2rem 是因为 main-viewbox 的 padding 为 1rem */}
             <Box
               className="content-container"
               tabIndex={0}
-              width={`calc(100vw - ${treeWidth}px - 2rem)`}
               onKeyDown={handleKeyDown}
             >
-              <Flex
-                position="absolute"
-                right="1rem"
-                top="0.5rem"
-                alignItems="center"
-                zIndex={1}
-              >
+              <Flex className="content-toolbar" alignItems="center" justifyContent="flex-end" flexWrap="wrap" gap={1}>
                 {contentState === "loaded" && (
                   <>
-                    <Text fontSize="sm" color="GrayText">{lineNumber} 行</Text>
-                    <Button size="sm" variant="ghost" color="GrayText" onClick={handleCopy} ml="0.5rem">
-                      <Text fontWeight="medium">复制</Text>
+                    <Text fontSize="sm" color="GrayText" mr="auto">共 {trimReport?.lineCount ?? 0} 行</Text>
+                    <Button size="sm" variant="ghost" color="GrayText" onClick={handleCopy} isDisabled={!content}>
+                      <Text fontWeight="medium">{truncated ? "复制预览" : "复制"}</Text>
                       <CopyIcon fontSize="sm" ml="0.2rem" />
                     </Button>
+                    {truncated && (
+                      <Button size="sm" colorScheme="blue" onClick={exportResult} isDisabled={exporting}>
+                        {exporting ? "正在导出…" : "导出完整内容"}
+                      </Button>
+                    )}
                   </>
                 )}
                 <Button size="sm" variant="ghost" color="GrayText" onClick={clearOutput}>
@@ -285,20 +284,27 @@ function App() {
                   <Broom fontSize="sm" ml="0.2rem" />
                 </Button>
               </Flex>
-              <Flex
-                hidden={contentState !== "loading"}
-                position="absolute"
-                top="50%"
-                left="50%"
-                gap="1rem"
-                transform="translate(-50%, -50%)"
-              >
-                <Loading on />
-                <span>整理中...</span>
-              </Flex>
-              <pre id="content-box" data-state={contentState} role={contentState === "error" ? "alert" : undefined} ref={preRef}>
-                <code>{content}</code>
-              </pre>
+              {exportFeedback && (
+                <Text
+                  role={exportFeedback.ok ? "status" : "alert"}
+                  fontSize="sm"
+                  px={2}
+                  overflowWrap="anywhere"
+                  color={exportFeedback.ok ? "green.700" : "red.600"}
+                >
+                  {exportFeedback.message}
+                </Text>
+              )}
+              {contentState === "loading" ? (
+                <Flex flex="1" alignItems="center" justifyContent="center" gap="1rem">
+                  <Loading on />
+                  <span>整理中...</span>
+                </Flex>
+              ) : (
+                <pre id="content-box" data-state={contentState} role={contentState === "error" ? "alert" : undefined} ref={preRef}>
+                  <code>{content}</code>
+                </pre>
+              )}
             </Box>
           </Box>
         </Box>

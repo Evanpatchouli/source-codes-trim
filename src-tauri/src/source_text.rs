@@ -7,6 +7,13 @@ pub(crate) struct TrimOptions {
     pub blank_lines: bool,
 }
 
+impl TrimOptions {
+    pub fn needs_parser(&self, path: &Path) -> bool {
+        (self.comments || self.trailing_whitespace || self.blank_lines)
+            && Syntax::for_path(path).is_some()
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Syntax {
     JavaScript,
@@ -207,13 +214,18 @@ pub(crate) fn write_source(
             }
             next_comment += 1;
         }
-        line.push_str(&source[pos..end]);
+        let cleaned = if pos == start {
+            body
+        } else {
+            line.push_str(&source[pos..end]);
+            &line
+        };
         let protected = protected_rows.get(row).copied().unwrap_or(false) || continued;
         continued = body.ends_with('\\');
         let text = if options.trailing_whitespace && !protected {
-            line.trim_end_matches([' ', '\t'])
+            cleaned.trim_end_matches([' ', '\t'])
         } else {
-            &line
+            cleaned
         };
         if protected || !options.blank_lines || !text.trim_matches([' ', '\t']).is_empty() {
             emit(text)?;
